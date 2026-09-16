@@ -14,6 +14,13 @@ public sealed class SendOtpRequest
     [MaxLength(100)]
     [JsonPropertyName("deviceId")]
     public string? DeviceId { get; init; }
+
+    /// <summary>
+    /// Officer role. USP_S_ValidateOfficer matches on role as well as mobile, so a wrong
+    /// value reads as "not registered". Defaults to Otp:DefaultRoleId (116, the ward RI).
+    /// </summary>
+    [JsonPropertyName("roleId")]
+    public int? RoleId { get; init; }
 }
 
 public sealed class SendOtpResponse

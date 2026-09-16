@@ -23,6 +23,17 @@ internal sealed class OtpService(
     public async Task<SendOtpResponse> SendAsync(SendOtpRequest request, CancellationToken ct)
     {
         var otpOptions = options.Value;
+        var roleId = request.RoleId ?? otpOptions.DefaultRoleId;
+
+        // Check the officer exists and is active BEFORE generating anything. Without this we
+        // happily store a code for any number that arrives, which wastes an SMS on a typo and
+        // lets an outsider probe the endpoint at no cost to themselves.
+        if (!await officers.OfficerExistsAsync(request.Mobile, roleId, ct))
+            throw ApiException.Unprocessable(
+                "This mobile number is not registered as an officer, or the account has been "
+                + "locked. Please contact your administrator.",
+                ApiErrorCodes.OfficerNotRegistered);
+
         var otp = GenerateOtp(otpOptions.Length);
 
         // Store first, then send. The reverse order can deliver a code the database has no

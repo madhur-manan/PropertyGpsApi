@@ -8,6 +8,7 @@ namespace PropertyGpsApi.Features.Auth;
 
 public interface IOfficerRepository
 {
+    Task<bool> OfficerExistsAsync(string mobile, int roleId, CancellationToken ct);
     Task<long> StoreOtpAsync(string mobile, string otp, CancellationToken ct);
     Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct);
     Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct);
@@ -57,6 +58,24 @@ internal sealed class OfficerRepository(
         return identity is null ? 0 : (long)identity.Value;
     }
 
+
+    /// <summary>
+    /// USP_S_ValidateOfficer. Returns zero rows for an unknown mobile AND for a known but
+    /// deactivated one - the procedure cannot distinguish them, and neither should we,
+    /// since telling them apart would let anyone enumerate officer mobile numbers.
+    /// </summary>
+    public async Task<bool> OfficerExistsAsync(string mobile, int roleId, CancellationToken ct)
+    {
+        var p = new DynamicParameters();
+        p.Add("@USR_MOBILENO", mobile, DbType.String, size: 10);
+        p.Add("@Ofcr_RoleId", roleId, DbType.Int32);
+
+        await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
+        var rows = await connection.QueryAsync(
+            Sp.Call(procedures.Value.ValidateOfficer, p, ct));
+
+        return rows.Any();
+    }
     public async Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct)
     {
         var p = new DynamicParameters();

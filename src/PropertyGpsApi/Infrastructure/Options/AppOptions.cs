@@ -55,6 +55,12 @@ public sealed class OtpOptions
     /// </summary>
     [Range(60, 6000)] public int ValidForSeconds { get; init; } = 6000;
 
+    /// <summary>
+    /// The role the mobile app signs in as. USP_S_ValidateOfficer matches on role as well as
+    /// mobile number, so this has to be right: 116 is the ward-level case worker (the RI).
+    /// </summary>
+    [Range(1, 9999)] public int DefaultRoleId { get; init; } = 116;
+
     /// <summary>Development logs the code instead of sending an SMS.</summary>
     [Required(AllowEmptyStrings = false)] public string Sender { get; init; } = "Development";
 }
@@ -63,7 +69,9 @@ public sealed class StoredProcedureOptions
 {
     public const string Section = "StoredProcedures";
 
+    [Required(AllowEmptyStrings = false)] public string ValidateOfficer { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string InsertOtp { get; init; } = "";
+    [Required(AllowEmptyStrings = false)] public string AssignApplication { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string ValidateOfficerOtp { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string InsertLoginData { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string FetchApplications { get; init; } = "";

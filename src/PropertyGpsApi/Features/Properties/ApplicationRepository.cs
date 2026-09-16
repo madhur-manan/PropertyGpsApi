@@ -1,5 +1,6 @@
 using System.Data;
 using Dapper;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 using PropertyGpsApi.Features.Properties.Dtos;
 using PropertyGpsApi.Infrastructure.Data;
@@ -11,6 +12,18 @@ public interface IApplicationRepository
 {
     Task<IReadOnlyList<ApplicationDto>> FetchAsync(
         FetchApplicationsRequest request, long officerId, int roleId, CancellationToken ct);
+
+    Task<AssignOutcome> AssignAsync(
+        int appId, long officerId, int roleId, string? officerName, bool assign, CancellationToken ct);
+}
+
+/// <summary>
+/// What USP_IU_Architect_AssignedApp reports back. StatusCode is 200 on success and 400 for
+/// a business rejection - already assigned, or the officer queue is full.
+/// </summary>
+public sealed record AssignOutcome(int StatusCode, int AssignId, int AppId, string? Message)
+{
+    public bool Succeeded => StatusCode == 200;
 }
 
 internal sealed class ApplicationRepository(
@@ -61,11 +74,75 @@ internal sealed class ApplicationRepository(
             + "corp {Corp} zone {Zone} ward {Ward}",
             rows.Count, officerId, roleId, level, request.CorporationId, request.ZoneId, request.WardId);
 
-        return rows.Select(Map).ToList();
+        // Merge in who currently holds each record. The fetch procedure does not report it,
+        // and without it the allot-to-me screen cannot tell a free record from a taken one.
+        var assignments = await ActiveAssignmentsAsync(
+            connection, rows.Select(r => (int)r.App_ID).Distinct().ToList(), ct);
+
+        return rows.Select(r => Map(r, assignments, officerId)).ToList();
     }
 
-    private static ApplicationDto Map(ApplicationRow row) => new()
+
+    public async Task<AssignOutcome> AssignAsync(
+        int appId, long officerId, int roleId, string? officerName, bool assign, CancellationToken ct)
     {
+        var p = new DynamicParameters();
+        p.Add("@AppId", appId, DbType.Int32);
+        p.Add("@Arch_Id", officerId, DbType.Int32);
+        p.Add("@Arch_Role", roleId, DbType.Int32);
+        p.Add("@Arch_Name", officerName ?? "", DbType.String, size: 150);
+        p.Add("@Status", "Pending", DbType.String, size: 30);
+        // IsActive is the assign/unassign switch: 1 inserts a new holding, 0 releases the
+        // officer's existing Pending row.
+        p.Add("@IsActive", assign, DbType.Boolean);
+
+        await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
+
+        var row = await connection.QueryFirstOrDefaultAsync<AssignResultRow>(
+            Sp.Call(procedures.Value.AssignApplication, p, ct));
+
+        if (row is null)
+            throw new InvalidOperationException(
+                "The assignment procedure returned no row, which it is not expected to do.");
+
+        logger.LogInformation(
+            "Assign appId={AppId} officer={OfficerId} assign={Assign} -> {StatusCode} {Message}",
+            appId, officerId, assign, row.StatusCode, row.Message);
+
+        return new AssignOutcome(row.StatusCode, row.Assign_Id, row.App_id, row.Message);
+    }
+
+    /// <summary>
+    /// Active assignments for a page of applications, so the list can show what is already
+    /// taken. One query for the whole page - never one per row.
+    /// </summary>
+    private async Task<Dictionary<int, AssignmentRow>> ActiveAssignmentsAsync(
+        SqlConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct)
+    {
+        if (appIds.Count == 0) return [];
+
+        const string sql = """
+            SELECT AppId, Arch_Id, Arch_Name, Status, AssignmentDate
+            FROM dbo.BtoA_Architect_AssignedApp WITH (NOLOCK)
+            WHERE IsActive = 1 AND AppId IN @appIds;
+            """;
+
+        var rows = await connection.QueryAsync<AssignmentRow>(
+            new CommandDefinition(sql, new { appIds }, cancellationToken: ct));
+
+        // An application should only have one active holding, but the table does not enforce
+        // that, so keep the most recent rather than throwing on a duplicate.
+        return rows
+            .GroupBy(r => r.AppId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.AssignmentDate).First());
+    }
+    private static ApplicationDto Map(
+        ApplicationRow row, IReadOnlyDictionary<int, AssignmentRow> assignments, long officerId)
+    {
+        assignments.TryGetValue((int)row.App_ID, out var held);
+
+        return new ApplicationDto
+        {
         AppId = row.App_ID,
         ApplicationId = row.ApplicationDisplayId,
         Epid = row.PropertyId,
@@ -81,6 +158,15 @@ internal sealed class ApplicationRepository(
         RoadType = row.RoadType,
         IsObjected = row.isObjectedFlag,
         HasGuidanceValue = row.GVFlag,
-        QueueNo = row.QueueNo
-    };
+        QueueNo = row.QueueNo,
+            AssignedToUserId = held?.Arch_Id,
+            AssignedToName = held?.Arch_Name,
+            AssignmentStatus = held?.Status,
+            AssignedOn = held?.AssignmentDate is { } a
+                ? new DateTimeOffset(a, TimeSpan.FromHours(5.5))
+                : null,
+            IsAssignedToMe = held is not null && held.Arch_Id == officerId,
+            IsAssignedToOther = held is not null && held.Arch_Id != officerId
+        };
+    }
 }

@@ -21,6 +21,11 @@
       "key": "basePath",
       "value": "v1/api/gbagps/singlesite",
       "type": "string"
+    },
+    {
+      "key": "appId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -285,6 +290,113 @@
             },
             "description": "The ward worklist the app caches in SQLite.\n\nThe officer and role come from the token, never the body. A role-116 officer asking for another ward gets 403 OUTSIDE_JURISDICTION.\n\nAdd an \"epid\" field to filter to one application."
           },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('fetched', function () { pm.expect(body.success).to.eql(true); });",
+                  "const rows = (body.data || []);",
+                  "const free = rows.find(function (r) { return r.assignedToUserId === null; });",
+                  "const mine = rows.filter(function (r) { return r.isAssignedToMe; });",
+                  "if (free) { pm.environment.set('appId', String(free.appId)); console.log('Next free appId: ' + free.appId); }",
+                  "console.log('Total ' + rows.length + ', held by me ' + mine.length + ', held by others ' + rows.filter(function (r) { return r.isAssignedToOther; }).length);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Allot to me",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"appId\": {{appId}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/api/gbagps/singlesite/propertyinfo/assign",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "api",
+                "gbagps",
+                "singlesite",
+                "propertyinfo",
+                "assign"
+              ]
+            },
+            "description": "Takes ownership of a record so it can be surveyed.\n\nThe officer comes from the token; the body carries only appId, which Fetch captured into {{appId}}.\n\nRejections are all 422 with recoverable=true:\n  ALREADY_ASSIGNED       - somebody else got there first\n  ASSIGNMENT_QUEUE_FULL  - you already hold two pending records\n  REASSIGN_LIMIT_REACHED - you have taken this same record too many times"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success) { console.log('Allotted: ' + body.data.message); }",
+                  "else { console.log('Rejected [' + body.code + ']: ' + body.message); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Release (unassign)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"appId\": {{appId}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/api/gbagps/singlesite/propertyinfo/unassign",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "api",
+                "gbagps",
+                "singlesite",
+                "propertyinfo",
+                "unassign"
+              ]
+            },
+            "description": "Hands a held record back to the pool. Backed by the same procedure via its IsActive flag.\n\nOnly works on a record you hold that is still Pending."
+          },
+          "event": [],
           "response": []
         }
       ]

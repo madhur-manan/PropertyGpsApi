@@ -41,6 +41,63 @@ public sealed class PropertyInfoController(IApplicationRepository applications) 
             results,
             page: new PageInfo { Start = 0, Range = results.Count, Returned = results.Count, Total = results.Count }));
     }
+
+    /// <summary>
+    /// "Allot to me". The officer takes ownership of a record before they can survey it.
+    /// </summary>
+    [HttpPost("assign")]
+    [ProducesResponseType<ApiResponse<AssignResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<AssignResponse>>> Assign(
+        [FromBody] AssignRequest request, CancellationToken ct)
+        => await ChangeAssignment(request, assign: true, ct);
+
+    /// <summary>
+    /// Release a record the officer is holding but has not completed, putting it back in the
+    /// pool. The same procedure backs both directions via its IsActive flag.
+    /// </summary>
+    [HttpPost("unassign")]
+    [ProducesResponseType<ApiResponse<AssignResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<AssignResponse>>> Unassign(
+        [FromBody] AssignRequest request, CancellationToken ct)
+        => await ChangeAssignment(request, assign: false, ct);
+
+    private async Task<ActionResult<ApiResponse<AssignResponse>>> ChangeAssignment(
+        AssignRequest request, bool assign, CancellationToken ct)
+    {
+        var officerId = User.RequireLong(GpsClaims.UserId);
+        var roleId = (int)User.RequireLong(GpsClaims.RoleId);
+        var officerName = User.FindFirstValue("name");
+
+        var outcome = await applications.AssignAsync(
+            request.AppId, officerId, roleId, officerName, assign, ct);
+
+        if (!outcome.Succeeded)
+        {
+            // The procedure rejects with a single 400 and an English sentence, so the code is
+            // recovered from the wording. Everything here is the officer's own situation to
+            // resolve - a record someone else took, or their own queue being full - so all of
+            // it is permanent for this request and recoverable once they act.
+            var message = outcome.Message?.Trim() ?? "The record could not be allotted.";
+            var code = message.Contains("Already Assigned", StringComparison.OrdinalIgnoreCase)
+                ? ApiErrorCodes.AlreadyAssigned
+                : message.Contains("pending in your queue", StringComparison.OrdinalIgnoreCase)
+                    ? ApiErrorCodes.QueueFull
+                    : message.Contains("maximum allowed limit", StringComparison.OrdinalIgnoreCase)
+                        ? ApiErrorCodes.ReassignLimitReached
+                        : ApiErrorCodes.AssignRejected;
+
+            throw ApiException.Unprocessable(message, code, recoverable: true);
+        }
+
+        return Ok(ApiResponse<AssignResponse>.Ok(
+            new AssignResponse
+            {
+                AssignId = outcome.AssignId,
+                AppId = outcome.AppId,
+                Message = outcome.Message?.Trim()
+            },
+            message: assign ? "Allotted to you." : "Released."));
+    }
 }
 
 internal static class ClaimsPrincipalExtensions

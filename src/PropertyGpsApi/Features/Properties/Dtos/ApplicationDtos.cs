@@ -43,6 +43,20 @@ public sealed class ApplicationDto
     [JsonPropertyName("isObjected")] public int? IsObjected { get; init; }
     [JsonPropertyName("hasGuidanceValue")] public int? HasGuidanceValue { get; init; }
     [JsonPropertyName("queueNo")] public int? QueueNo { get; init; }
+
+    // Assignment state, merged in from BtoA_Architect_AssignedApp. The fetch procedure's
+    // Level 5 branch does not return it, but without it the app cannot tell which records
+    // are already taken - which is the whole point of the allot-to-me screen.
+    [JsonPropertyName("assignedToUserId")] public int? AssignedToUserId { get; init; }
+    [JsonPropertyName("assignedToName")] public string? AssignedToName { get; init; }
+    [JsonPropertyName("assignmentStatus")] public string? AssignmentStatus { get; init; }
+    [JsonPropertyName("assignedOn")] public DateTimeOffset? AssignedOn { get; init; }
+
+    /// <summary>True when this record is held by the officer who made the request.</summary>
+    [JsonPropertyName("isAssignedToMe")] public bool IsAssignedToMe { get; init; }
+
+    /// <summary>True when somebody else holds it, so "Allot to me" must be disabled.</summary>
+    [JsonPropertyName("isAssignedToOther")] public bool IsAssignedToOther { get; init; }
 }
 
 /// <summary>One row of USP_S_BtoA_GpsDashData_v1 at Level 5.</summary>

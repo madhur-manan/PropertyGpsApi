@@ -20,4 +20,9 @@ public static class ApiErrorCodes
     public const string OfficerLocked = "OFFICER_LOCKED";
 
     public const string OutsideJurisdiction = "OUTSIDE_JURISDICTION";
+
+    public const string AlreadyAssigned = "ALREADY_ASSIGNED";
+    public const string QueueFull = "ASSIGNMENT_QUEUE_FULL";
+    public const string ReassignLimitReached = "REASSIGN_LIMIT_REACHED";
+    public const string AssignRejected = "ASSIGN_REJECTED";
 }
