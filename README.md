@@ -33,6 +33,16 @@ No credential is stored in this repository. Supply them locally:
     dotnet user-secrets set "Jwt:Key"         "<48+ random bytes, base64>"
     dotnet run
 
+Run it from `src/PropertyGpsApi` with plain `dotnet run`, which picks up the launch profile
+and therefore the Development environment.
+
+> **If it fails at startup saying configuration is missing**, the process is not running in
+> the Development environment - and user secrets are only loaded there. Running the published
+> `.exe`, `dotnet PropertyGpsApi.dll`, or Visual Studio on another profile will all do this.
+> Either set `ASPNETCORE_ENVIRONMENT=Development`, or supply the values as environment
+> variables (`Database__Master`, `Database__B2A`, `Jwt__Key` - a double underscore stands for
+> the colon). The startup message spells out both options.
+
 In production use environment variables instead. The app refuses to start if a connection
 string is missing, if `Jwt:Key` is shorter than 32 bytes, or if it is still `CHANGE_ME`.
 

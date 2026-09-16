@@ -19,6 +19,12 @@ using PropertyGpsApi.Infrastructure.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (!StartupChecks.TryEnsureConfigured(builder, out var configurationError))
+{
+    Console.Error.WriteLine(configurationError);
+    return 1;
+}
+
 // ---- Options -------------------------------------------------------------
 // Everything is ValidateOnStart. A missing connection string or a placeholder JWT key
 // must stop the process at deploy time, not surface as a 500 on the first field request
@@ -247,5 +253,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.Run();
+return 0;
 
 public partial class Program;
