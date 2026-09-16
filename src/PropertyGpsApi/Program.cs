@@ -5,11 +5,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using PropertyGpsApi;
 using PropertyGpsApi.Common;
 using PropertyGpsApi.Features.Auth;
+using PropertyGpsApi.Features.Masters;
 using PropertyGpsApi.Features.Properties;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.Options;
@@ -48,6 +50,7 @@ builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IOfficerRepository, OfficerRepository>();
 builder.Services.AddScoped<IOtpService, OtpService>();
 builder.Services.AddScoped<IApplicationRepository, ApplicationRepository>();
+builder.Services.AddScoped<IMasterRepository, MasterRepository>();
 
 // The OTP sender seam. DevelopmentOtpSender writes the code to the log, which is the whole
 // point of it, and exactly why selecting it outside Development must fail the process
@@ -62,7 +65,14 @@ switch (otpSender)
         builder.Services.AddSingleton<IOtpSender, DevelopmentOtpSender>();
         break;
     case "SmsGateway":
-        builder.Services.AddSingleton<IOtpSender, SmsGatewayOtpSender>();
+        builder.Services.AddOptions<SmsOptions>()
+            .Bind(builder.Configuration.GetSection(SmsOptions.Section))
+            .ValidateDataAnnotations().ValidateOnStart();
+        builder.Services.AddHttpClient<IOtpSender, SmsGatewayOtpSender>((sp, client) =>
+        {
+            var sms = sp.GetRequiredService<IOptions<SmsOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(sms.TimeoutSeconds);
+        });
         break;
     default:
         throw new InvalidOperationException("Unknown Otp:Sender value: " + otpSender);

@@ -23,17 +23,3 @@ internal sealed class DevelopmentOtpSender(ILogger<DevelopmentOtpSender> logger)
     }
 }
 
-/// <summary>
-/// Placeholder for the real gateway. Deliberately fails loudly rather than silently
-/// succeeding: an OTP the officer never receives must not look like a successful send.
-/// </summary>
-internal sealed class SmsGatewayOtpSender(ILogger<SmsGatewayOtpSender> logger) : IOtpSender
-{
-    public Task SendAsync(string mobile, string otp, CancellationToken ct)
-    {
-        logger.LogError("SMS gateway is not configured; cannot deliver an OTP to {Mobile}", mobile);
-        throw new NotImplementedException(
-            "The BBMP SMS gateway is not wired up yet. Provide the provider, endpoint, "
-            + "credentials and DLT template code, then implement SmsGatewayOtpSender.");
-    }
-}
