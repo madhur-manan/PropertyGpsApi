@@ -3,5 +3,6 @@ obj/
 *.user
 *.suo
 .vs/
+appsettings.Local.json
 appsettings.*.local.json
 publish/

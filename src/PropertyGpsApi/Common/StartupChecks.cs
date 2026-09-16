@@ -62,7 +62,18 @@ public static class StartupChecks
         else
         {
             message
-                .AppendLine("  Set them with user secrets, from the src/PropertyGpsApi folder:")
+                .AppendLine("  Easiest fix - create src/PropertyGpsApi/appsettings.Local.json (git-ignored):")
+                .AppendLine()
+                .AppendLine("      {")
+                .AppendLine("        \"Database\": { \"Master\": \"Server=...\", \"B2A\": \"Server=...\" },")
+                .AppendLine("        \"Jwt\": { \"Key\": \"<48 random bytes, base64>\" }")
+                .AppendLine("      }")
+                .AppendLine()
+                .AppendLine("  That works from any IDE, any Windows profile, and from the built exe.")
+                .AppendLine()
+                .AppendLine("  Or use user secrets, from the src/PropertyGpsApi folder - note these are tied to")
+                .AppendLine("  the Windows profile that created them, so an IDE running as another user will")
+                .AppendLine("  not see them:")
                 .AppendLine()
                 .AppendLine("      dotnet user-secrets set \"Database:Master\" \"Server=...;Database=masterDB_prod;...\"")
                 .AppendLine("      dotnet user-secrets set \"Database:B2A\"    \"Server=...;Database=KhataBtoA_prod;...\"")

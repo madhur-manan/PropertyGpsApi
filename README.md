@@ -25,13 +25,22 @@ The route prefix `v1/api/gbagps/singlesite` is not invented: live image URLs sto
 
 ## Running it
 
-No credential is stored in this repository. Supply them locally:
+No credential is stored in this repository. Create `src/PropertyGpsApi/appsettings.Local.json`,
+which is git-ignored and copied next to the exe but never into a publish:
 
-    cd src/PropertyGpsApi
-    dotnet user-secrets set "Database:Master" "Server=...;Database=masterDB_prod;..."
-    dotnet user-secrets set "Database:B2A"    "Server=...;Database=KhataBtoA_prod;..."
-    dotnet user-secrets set "Jwt:Key"         "<48+ random bytes, base64>"
-    dotnet run
+    {
+      "Database": {
+        "Master": "Server=<host>;Database=masterDB_prod;User Id=...;Password=...;TrustServerCertificate=True;",
+        "B2A":    "Server=<host>;Database=KhataBtoA_prod;User Id=...;Password=...;TrustServerCertificate=True;"
+      },
+      "Jwt": { "Key": "<48 random bytes, base64>" }
+    }
+
+Then `dotnet run` from `src/PropertyGpsApi`, or just press F5 in Visual Studio.
+
+User secrets also work, but only in the Development environment **and only for the Windows
+profile that created them** - which is why an IDE running as a different user reports every
+setting as missing. The local file has neither limitation, so prefer it.
 
 Run it from `src/PropertyGpsApi` with plain `dotnet run`, which picks up the launch profile
 and therefore the Development environment.

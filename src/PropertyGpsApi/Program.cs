@@ -19,6 +19,15 @@ using PropertyGpsApi.Infrastructure.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// A git-ignored local overrides file, layered on top of appsettings.json.
+//
+// User secrets are the usual answer for developer credentials, but they only load in the
+// Development environment AND only for the Windows profile that created them, which makes
+// them quietly invisible when the app is launched from an IDE running as another user, or
+// from the published exe. This file has none of those failure modes. It is listed in
+// .gitignore and must never be committed.
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
 if (!StartupChecks.TryEnsureConfigured(builder, out var configurationError))
 {
     Console.Error.WriteLine(configurationError);
