@@ -81,10 +81,17 @@ will bite someone later.
 2. **`usp_s_GetZonesOrWardsByCorpId` is unusable for the same reason**, so the zone and
    ward lookups here read `mst_AROMapping` directly.
 
-3. **The OTP is six digits, but the Flutter app expects four** (`otp_page.dart:28`,
-   `_otpLength = 4`). `USP_I_OTP` hardcodes test values `999999` and `673489`, and
-   **overrides whatever the caller generated** for those numbers - so for those accounts
-   the code that gets stored is not the code the API sent.
+3. **The OTP is six digits. RESOLVED - the app changes, not the backend.** The Flutter
+   side has `_otpLength = 4` (`otp_page.dart:28`) and will move to 6; `USP_I_OTP` and the
+   whole BBMP estate are six-digit, so the client was the odd one out.
+
+   Better than hardcoding 6 in the app: the send response already returns `otpLength`, so
+   the OTP box can size itself from the server and this can never drift again.
+
+   Still worth knowing: `USP_I_OTP` hardcodes test values `999999` and `673489` for ten
+   specific mobile numbers, and **overrides whatever the caller generated** for those - so
+   for those accounts the code that gets stored is not the code the API sent, and the
+   `devOtp` field in the send response will not match. Real numbers are unaffected.
 
 4. **`USP_I_OTP` and `USP_S_Officer_ValidateOTP` disagree about a column.** The insert
    writes the device id into `OTP_Tran.DeviceId`, but the validate filters on
