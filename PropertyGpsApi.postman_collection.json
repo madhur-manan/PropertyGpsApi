@@ -1,8 +1,8 @@
 {
   "info": {
-    "_postman_id": "b1f4e2a0-7c3d-4f8a-9e21-propertygpsapi",
+    "_postman_id": "6d96bb05-a4ed-4317-9e8a-ef818023debb",
     "name": "PropertyGpsApi - Single Plot GPS",
-    "description": "BBMP Single Plot GPS backend.\n\nFLOW: run the requests in order.\n  1. Send OTP      - stores a code against the mobile number\n  2. Verify OTP    - exchange the code for a JWT (auto-saved to {{token}})\n  3. Fetch         - the ward worklist the app caches in SQLite\n\nREADING THE OTP: in Development no SMS is sent. The code is written to the\nAPI console as: \"DEV OTP for 9000000001 is 123456 (no SMS sent)\".\nCopy it into the Verify OTP request body.\n\nVerify OTP saves the token, corporationId, zoneId and wardId into the\nenvironment automatically, so Fetch works without editing anything.",
+    "description": "BBMP Single Plot GPS backend.\n\nRun in order:\n1. Send OTP\n2. Verify OTP (paste the code; the token is saved automatically)\n3. Fetch applications\n\nIn Development no SMS is sent - the code is printed to the API console as \"DEV OTP for 9000000001 is 123456 (no SMS sent)\". You can also read it with:\n\n    SELECT TOP 1 OTP FROM OTP_Tran WHERE MobileNO = '9000000001' ORDER BY OTPID DESC;\n\nDo not retry with a wrong code: four failures deactivate the officer account.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -15,6 +15,14 @@
       }
     ]
   },
+  "event": [],
+  "variable": [
+    {
+      "key": "basePath",
+      "value": "v1/api/gbagps/singlesite",
+      "type": "string"
+    }
+  ],
   "item": [
     {
       "name": "0. Health",
@@ -38,7 +46,8 @@
               ]
             },
             "description": "Process is up. Touches no dependencies."
-          }
+          },
+          "response": []
         },
         {
           "name": "Readiness",
@@ -59,7 +68,8 @@
               ]
             },
             "description": "Round-trips both databases with SELECT 1. Check this first if anything else fails."
-          }
+          },
+          "response": []
         }
       ]
     },
@@ -73,28 +83,37 @@
             "header": [
               {
                 "key": "Content-Type",
-                "value": "application/json"
+                "value": "application/json",
+                "type": "text"
               }
             ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"mobile\": \"{{mobile}}\",\n    \"deviceId\": \"postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
             "url": {
-              "raw": "{{baseUrl}}/{{basePath}}/auth/otp/send",
+              "raw": "{{baseUrl}}/v1/api/gbagps/singlesite/auth/otp/send",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "{{basePath}}",
+                "v1",
+                "api",
+                "gbagps",
+                "singlesite",
                 "auth",
                 "otp",
                 "send"
               ]
             },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"mobile\": \"{{mobile}}\",\n  \"deviceId\": \"postman\"\n}"
-            },
-            "description": "Generates a six-digit code, stores it via USP_I_OTP, and dispatches it.\n\nIn Development the code is printed to the API console instead of being sent by SMS.\n\nRate limited to 5 per 5 minutes per IP."
+            "description": "Generates a six-digit code and stores it via USP_I_OTP.\n\nRate limited to 5 per 5 minutes per IP."
           },
-          "event": []
+          "response": []
         },
         {
           "name": "2. Verify OTP",
@@ -103,27 +122,37 @@
             "header": [
               {
                 "key": "Content-Type",
-                "value": "application/json"
+                "value": "application/json",
+                "type": "text"
               }
             ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"mobile\": \"{{mobile}}\",\n    \"otp\": \"123456\",\n    \"deviceId\": \"postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
             "url": {
-              "raw": "{{baseUrl}}/{{basePath}}/auth/otp/verify",
+              "raw": "{{baseUrl}}/v1/api/gbagps/singlesite/auth/otp/verify",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "{{basePath}}",
+                "v1",
+                "api",
+                "gbagps",
+                "singlesite",
                 "auth",
                 "otp",
                 "verify"
               ]
             },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"mobile\": \"{{mobile}}\",\n  \"otp\": \"123456\",\n  \"deviceId\": \"postman\"\n}"
-            },
-            "description": "Replace \"otp\" with the code from the API console.\n\nOn success the token and the officer corp/zone/ward are saved to the environment automatically.\n\nWARNING: a wrong code increments NoOfFailedAttempt on the officer record, and four failures deactivate the account."
+            "description": "Replace \"otp\" with the real code.\n\nOn success the token, corporationId, zoneId and wardId are saved to the environment automatically."
           },
+          "response": [],
           "event": [
             {
               "listen": "test",
@@ -131,15 +160,15 @@
                 "type": "text/javascript",
                 "exec": [
                   "const body = pm.response.json();",
-                  "pm.test('signed in', () => pm.expect(body.success).to.be.true);",
+                  "pm.test('signed in', function () { pm.expect(body.success).to.eql(true); });",
                   "if (body.success && body.data && body.data.token) {",
                   "    pm.environment.set('token', body.data.token);",
-                  "    pm.environment.set('corporationId', String(body.data.corporationId));",
-                  "    pm.environment.set('zoneId', String(body.data.zoneId));",
-                  "    pm.environment.set('wardId', String(body.data.wardId));",
-                  "    console.log('Token saved. corp/zone/ward captured from the officer record.');",
+                  "    if (body.data.corporationId) pm.environment.set('corporationId', String(body.data.corporationId));",
+                  "    if (body.data.zoneId) pm.environment.set('zoneId', String(body.data.zoneId));",
+                  "    if (body.data.wardId) pm.environment.set('wardId', String(body.data.wardId));",
+                  "    console.log('Token saved to the environment.');",
                   "} else {",
-                  "    console.log('No token: ' + body.code + ' - ' + body.message);",
+                  "    console.log('No token. ' + body.code + ': ' + body.message);",
                   "}"
                 ]
               }
@@ -157,24 +186,22 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/{{basePath}}/masters/zones?corporationId={{corporationId}}",
+              "raw": "{{baseUrl}}/v1/api/gbagps/singlesite/masters/zones",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "{{basePath}}",
+                "v1",
+                "api",
+                "gbagps",
+                "singlesite",
                 "masters",
                 "zones"
-              ],
-              "query": [
-                {
-                  "key": "corporationId",
-                  "value": "{{corporationId}}"
-                }
               ]
             },
-            "description": "Zones available in a corporation. Needed because sign-in returns ward names but not ward ids."
-          }
+            "description": "Zones in a corporation. Needed because sign-in returns ward names but not ward ids."
+          },
+          "response": []
         },
         {
           "name": "Wards in a zone",
@@ -182,24 +209,22 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/{{basePath}}/masters/wards?zoneId={{zoneId}}",
+              "raw": "{{baseUrl}}/v1/api/gbagps/singlesite/masters/wards",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "{{basePath}}",
+                "v1",
+                "api",
+                "gbagps",
+                "singlesite",
                 "masters",
                 "wards"
-              ],
-              "query": [
-                {
-                  "key": "zoneId",
-                  "value": "{{zoneId}}"
-                }
               ]
             },
             "description": "Wards in a zone, with the ids the fetch request needs."
-          }
+          },
+          "response": []
         }
       ]
     },
@@ -213,35 +238,38 @@
             "header": [
               {
                 "key": "Content-Type",
-                "value": "application/json"
+                "value": "application/json",
+                "type": "text"
               }
             ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"corporationId\": \"{{corporationId}}\",\n    \"zoneId\": \"{{zoneId}}\",\n    \"wardId\": \"{{wardId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
             "url": {
-              "raw": "{{baseUrl}}/{{basePath}}/propertyinfo/fetch",
+              "raw": "{{baseUrl}}/v1/api/gbagps/singlesite/propertyinfo/fetch",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "{{basePath}}",
+                "v1",
+                "api",
+                "gbagps",
+                "singlesite",
                 "propertyinfo",
                 "fetch"
               ]
             },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"corporationId\": \"{{corporationId}}\",\n  \"zoneId\": \"{{zoneId}}\",\n  \"wardId\": \"{{wardId}}\"\n}"
-            },
-            "description": "The ward worklist. Requires the bearer token.\n\nThe officer and role come from the token, never the body. A role-116 officer asking for any ward but their own gets 403 OUTSIDE_JURISDICTION.\n\nOptional \"epid\" field filters to a single application."
+            "description": "The ward worklist the app caches in SQLite.\n\nThe officer and role come from the token, never the body. A role-116 officer asking for another ward gets 403 OUTSIDE_JURISDICTION.\n\nAdd an \"epid\" field to filter to one application."
           },
-          "event": []
+          "response": []
         }
       ]
-    }
-  ],
-  "variable": [
-    {
-      "key": "basePath",
-      "value": "v1/api/gbagps/singlesite"
     }
   ]
 }
