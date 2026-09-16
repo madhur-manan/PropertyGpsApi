@@ -18,7 +18,12 @@ public sealed class SendOtpRequest
 
 public sealed class SendOtpResponse
 {
-    [JsonPropertyName("requestId")] public string RequestId { get; init; } = "";
+    /// <summary>
+    /// The OTP_Tran row id for this challenge - an audit handle, NOT the code the officer
+    /// types. It was called requestId and, being six digits like the code itself, was easy
+    /// to paste into the wrong field.
+    /// </summary>
+    [JsonPropertyName("otpRequestId")] public string OtpRequestId { get; init; } = "";
 
     /// <summary>
     /// How long the client must wait before offering Resend. The Flutter app counts this
@@ -53,7 +58,7 @@ public sealed class VerifyOtpRequest
     [JsonPropertyName("otp")]
     public string Otp { get; init; } = "";
 
-    [JsonPropertyName("requestId")] public string? RequestId { get; init; }
+    [JsonPropertyName("otpRequestId")] public string? OtpRequestId { get; init; }
     [JsonPropertyName("deviceId")] public string? DeviceId { get; init; }
 }
 

@@ -41,7 +41,7 @@ internal sealed class OtpService(
 
         return new SendOtpResponse
         {
-            RequestId = otpId.ToString(),
+            OtpRequestId = otpId.ToString(),
             ResendAfterSeconds = otpOptions.ResendAfterSeconds,
             OtpValidForSeconds = otpOptions.ValidForSeconds,
             OtpLength = otpOptions.Length,
