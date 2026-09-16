@@ -15,7 +15,9 @@ The first flow, verified end to end against `172.31.0.113\MSSQLSERVER19`:
 |---|---|
 | `POST v1/api/gbagps/singlesite/auth/otp/send` | `USP_I_OTP` |
 | `POST v1/api/gbagps/singlesite/auth/otp/verify` | `USP_S_Officer_ValidateOTP` + `usp_InsertLoginData` |
-| `POST v1/api/gbagps/singlesite/propertyinfo/fetch` | `USP_S_BtoA_GpsDashData_v1` |
+| `POST v1/api/gbagps/singlesite/propertyinfo/fetch` | `USP_S_GetAppDetails` |
+| `POST v1/api/gbagps/singlesite/propertyinfo/assign` / `unassign` | `USP_IU_Architect_AssignedApp` |
+| `POST v1/api/gbagps/singlesite/propertyinfo/push-status` | `USP_U_GpsPushedDetails` + 2 log procs |
 | `GET  v1/api/gbagps/singlesite/masters/zones?corporationId=` | `mst_AROMapping` |
 | `GET  v1/api/gbagps/singlesite/masters/wards?zoneId=` | `mst_AROMapping` |
 | `GET  /health/live`, `GET /health/ready` | - |

@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace PropertyGpsApi.Features.Properties.Dtos;
 
 /// <summary>
-/// The officer (cby) and role (crole) are taken from the bearer token, never from the body -
+/// The officer (cby) and role (crole) are taken from the bearer token, never the body -
 /// a client must not be able to name itself and read another officer's ward.
 /// </summary>
 public sealed class FetchApplicationsRequest
@@ -25,53 +25,4 @@ public sealed class FetchApplicationsRequest
     [MaxLength(50)]
     [JsonPropertyName("epid")]
     public string? Epid { get; init; }
-}
-
-public sealed class ApplicationDto
-{
-    [JsonPropertyName("appId")] public long AppId { get; init; }
-    [JsonPropertyName("applicationId")] public string? ApplicationId { get; init; }
-    [JsonPropertyName("epid")] public string? Epid { get; init; }
-    [JsonPropertyName("sasId")] public string? SasId { get; init; }
-    [JsonPropertyName("ownerNames")] public string? OwnerNames { get; init; }
-    [JsonPropertyName("dateOfApplied")] public DateTimeOffset? DateOfApplied { get; init; }
-    [JsonPropertyName("status")] public string? Status { get; init; }
-    [JsonPropertyName("applicationType")] public string? ApplicationType { get; init; }
-    [JsonPropertyName("roadType")] public string? RoadType { get; init; }
-
-    // 0/1 ints rather than bools, matching how every other flag on this contract is carried.
-    [JsonPropertyName("isObjected")] public int? IsObjected { get; init; }
-    [JsonPropertyName("hasGuidanceValue")] public int? HasGuidanceValue { get; init; }
-    [JsonPropertyName("queueNo")] public int? QueueNo { get; init; }
-
-    // Assignment state, merged in from BtoA_Architect_AssignedApp. The fetch procedure's
-    // Level 5 branch does not return it, but without it the app cannot tell which records
-    // are already taken - which is the whole point of the allot-to-me screen.
-    [JsonPropertyName("assignedToUserId")] public int? AssignedToUserId { get; init; }
-    [JsonPropertyName("assignedToName")] public string? AssignedToName { get; init; }
-    [JsonPropertyName("assignmentStatus")] public string? AssignmentStatus { get; init; }
-    [JsonPropertyName("assignedOn")] public DateTimeOffset? AssignedOn { get; init; }
-
-    /// <summary>True when this record is held by the officer who made the request.</summary>
-    [JsonPropertyName("isAssignedToMe")] public bool IsAssignedToMe { get; init; }
-
-    /// <summary>True when somebody else holds it, so "Allot to me" must be disabled.</summary>
-    [JsonPropertyName("isAssignedToOther")] public bool IsAssignedToOther { get; init; }
-}
-
-/// <summary>One row of USP_S_BtoA_GpsDashData_v1 at Level 5.</summary>
-internal sealed class ApplicationRow
-{
-    public long App_ID { get; init; }
-    public string? ApplicationDisplayId { get; init; }
-    public string? OwnerNames { get; init; }
-    public DateTime? SubmittedOn { get; init; }
-    public string? PropertyId { get; init; }
-    public string? SasNo { get; init; }
-    public string? Status { get; init; }
-    public string? Application_Type { get; init; }
-    public string? RoadType { get; init; }
-    public int? isObjectedFlag { get; init; }
-    public int? GVFlag { get; init; }
-    public int? QueueNo { get; init; }
 }

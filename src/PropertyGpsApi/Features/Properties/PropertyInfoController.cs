@@ -11,6 +11,7 @@ namespace PropertyGpsApi.Features.Properties;
 [Authorize]
 [Route(ApiRoutes.Base + "/propertyinfo")]
 public sealed class PropertyInfoController(
+    IPropertyRepository properties,
     IApplicationRepository applications,
     IPushStatusRepository pushStatus) : ControllerBase
 {
@@ -18,8 +19,8 @@ public sealed class PropertyInfoController(
     /// Step 3: the officer's ward worklist, which the app stores in SQLite for offline use.
     /// </summary>
     [HttpPost("fetch")]
-    [ProducesResponseType<ApiResponse<IReadOnlyList<ApplicationDto>>>(StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<ApplicationDto>>>> Fetch(
+    [ProducesResponseType<ApiResponse<IReadOnlyList<PropertyDto>>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<PropertyDto>>>> Fetch(
         [FromBody] FetchApplicationsRequest request, CancellationToken ct)
     {
         var officerId = User.RequireLong(GpsClaims.UserId);
@@ -37,9 +38,9 @@ public sealed class PropertyInfoController(
                     ApiErrorCodes.OutsideJurisdiction);
         }
 
-        var results = await applications.FetchAsync(request, officerId, roleId, ct);
+        var results = await properties.FetchAsync(request, officerId, ct);
 
-        return Ok(ApiResponse<IReadOnlyList<ApplicationDto>>.Ok(
+        return Ok(ApiResponse<IReadOnlyList<PropertyDto>>.Ok(
             results,
             page: new PageInfo { Start = 0, Range = results.Count, Returned = results.Count, Total = results.Count }));
     }
