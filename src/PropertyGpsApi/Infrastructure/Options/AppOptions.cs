@@ -75,6 +75,9 @@ public sealed class StoredProcedureOptions
     [Required(AllowEmptyStrings = false)] public string ValidateOfficerOtp { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string InsertLoginData { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string FetchApplications { get; init; } = "";
+    [Required(AllowEmptyStrings = false)] public string UpdatePushedDetails { get; init; } = "";
+    [Required(AllowEmptyStrings = false)] public string InsertPushExchange { get; init; } = "";
+    [Required(AllowEmptyStrings = false)] public string InsertNotPushed { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string FetchApplicationsCount { get; init; } = "";
 
     /// <summary>Written into Login_Tran.AppID so BBMP can tell this app's logins apart.</summary>

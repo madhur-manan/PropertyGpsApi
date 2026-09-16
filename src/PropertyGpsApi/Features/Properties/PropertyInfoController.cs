@@ -10,7 +10,9 @@ namespace PropertyGpsApi.Features.Properties;
 [ApiController]
 [Authorize]
 [Route(ApiRoutes.Base + "/propertyinfo")]
-public sealed class PropertyInfoController(IApplicationRepository applications) : ControllerBase
+public sealed class PropertyInfoController(
+    IApplicationRepository applications,
+    IPushStatusRepository pushStatus) : ControllerBase
 {
     /// <summary>
     /// Step 3: the officer's ward worklist, which the app stores in SQLite for offline use.
@@ -97,6 +99,28 @@ public sealed class PropertyInfoController(IApplicationRepository applications) 
                 Message = outcome.Message?.Trim()
             },
             message: assign ? "Allotted to you." : "Released."));
+    }
+
+    /// <summary>
+    /// The device reporting which fetched applications it stored. Accepting one marks it
+    /// pushed, which is how the server stops offering it again.
+    /// </summary>
+    [HttpPost("push-status")]
+    [ProducesResponseType<ApiResponse<PushStatusResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<PushStatusResponse>>> PushStatus(
+        [FromBody] PushStatusRequest request, CancellationToken ct)
+    {
+        var officerId = User.RequireLong(GpsClaims.UserId);
+        var roleId = (int)User.RequireLong(GpsClaims.RoleId);
+
+        var result = await pushStatus.RecordAsync(request, officerId, roleId, ct);
+
+        // Per-item verdicts, so one unknown application cannot make the device re-send the
+        // whole batch. success here means "we recorded every outcome", not "all succeeded" -
+        // each item carries its own accepted flag.
+        return Ok(ApiResponse<PushStatusResponse>.Ok(
+            result,
+            message: $"{result.Accepted} accepted, {result.Rejected} rejected."));
     }
 }
 

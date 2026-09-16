@@ -26,6 +26,16 @@
       "key": "appId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "applicationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "epid",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -303,7 +313,9 @@
                   "const free = rows.find(function (r) { return r.assignedToUserId === null; });",
                   "const mine = rows.filter(function (r) { return r.isAssignedToMe; });",
                   "if (free) { pm.environment.set('appId', String(free.appId)); console.log('Next free appId: ' + free.appId); }",
-                  "console.log('Total ' + rows.length + ', held by me ' + mine.length + ', held by others ' + rows.filter(function (r) { return r.isAssignedToOther; }).length);"
+                  "console.log('Total ' + rows.length + ', held by me ' + mine.length + ', held by others ' + rows.filter(function (r) { return r.isAssignedToOther; }).length);",
+                  "const first = rows[0];",
+                  "if (first) { pm.environment.set('applicationId', first.applicationId); pm.environment.set('epid', first.epid); }"
                 ]
               }
             }
@@ -397,6 +409,59 @@
             "description": "Hands a held record back to the pool. Backed by the same procedure via its IsActive flag.\n\nOnly works on a record you hold that is still Pending."
           },
           "event": [],
+          "response": []
+        },
+        {
+          "name": "Report push status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"items\": [\n        {\n            \"applicationId\": \"{{applicationId}}\",\n            \"epid\": \"{{epid}}\",\n            \"success\": true,\n            \"message\": \"Stored on device\"\n        }\n    ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/api/gbagps/singlesite/propertyinfo/push-status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "api",
+                "gbagps",
+                "singlesite",
+                "propertyinfo",
+                "push-status"
+              ]
+            },
+            "description": "The device reporting which fetched applications it actually stored.\n\nAccepting one sets IsPushedToGps on BtoAMainApp, which is how the server stops offering it again - so this is what makes the ward download idempotent.\n\nSend up to 500 items. Each carries its own verdict, so one unknown application does not make the device re-send the batch:\n  \"GPS details updated successfully.\"  accepted, now marked pushed\n  \"This record is already pushed.\"     accepted, nothing to do\n  \"No matching application found.\"     unknown, or not at App_Status 10\n\nsuccess:false records the failure WITHOUT marking the record pushed, so the server will offer it again, and writes an application-wise row to the exception log.\n\nFetch captures the first record into {{applicationId}} and {{epid}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('recorded', function () { pm.expect(body.success).to.eql(true); });",
+                  "(body.data.results || []).forEach(function (r) {",
+                  "    console.log((r.accepted ? 'OK   ' : 'SKIP ') + r.applicationId + ' - ' + r.message);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "response": []
         }
       ]

@@ -66,6 +66,7 @@ builder.Services.AddScoped<IOfficerRepository, OfficerRepository>();
 builder.Services.AddScoped<IOtpService, OtpService>();
 builder.Services.AddScoped<IApplicationRepository, ApplicationRepository>();
 builder.Services.AddScoped<IMasterRepository, MasterRepository>();
+builder.Services.AddScoped<IPushStatusRepository, PushStatusRepository>();
 
 // The OTP sender seam. DevelopmentOtpSender writes the code to the log, which is the whole
 // point of it, and exactly why selecting it outside Development must fail the process
