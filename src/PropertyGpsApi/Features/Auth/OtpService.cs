@@ -44,7 +44,10 @@ internal sealed class OtpService(
             RequestId = otpId.ToString(),
             ResendAfterSeconds = otpOptions.ResendAfterSeconds,
             OtpValidForSeconds = otpOptions.ValidForSeconds,
-            OtpLength = otpOptions.Length
+            OtpLength = otpOptions.Length,
+            // Tied to the sender type, not to a config flag: Program.cs already refuses to
+            // register DevelopmentOtpSender outside Development, so one guard covers both.
+            DevOtp = sender is DevelopmentOtpSender ? otp : null
         };
     }
 

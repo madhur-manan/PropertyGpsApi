@@ -111,9 +111,27 @@
                 "send"
               ]
             },
-            "description": "Generates a six-digit code and stores it via USP_I_OTP.\n\nRate limited to 5 per 5 minutes per IP."
+            "description": "Generates a six-digit code and stores it via USP_I_OTP.\n\nIn Development the response also carries \"devOtp\" - the code itself - and the test script saves it to {{otp}}, so Verify OTP needs no editing. That field is only ever populated when the Development sender is in use; a deployed instance cannot return it.\n\nRate limited to 5 per 5 minutes per IP."
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('OTP sent', function () { pm.expect(body.success).to.eql(true); });",
+                  "if (body.success && body.data && body.data.devOtp) {",
+                  "    pm.environment.set('otp', body.data.devOtp);",
+                  "    console.log('OTP captured: ' + body.data.devOtp + ' - just run Verify OTP next.');",
+                  "} else {",
+                  "    console.log('No devOtp in the response. That means a real SMS was sent, so read the code from the phone.');",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "2. Verify OTP",
@@ -128,7 +146,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n    \"mobile\": \"{{mobile}}\",\n    \"otp\": \"123456\",\n    \"deviceId\": \"postman\"\n}",
+              "raw": "{\n    \"mobile\": \"{{mobile}}\",\n    \"otp\": \"{{otp}}\",\n    \"deviceId\": \"postman\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -150,7 +168,7 @@
                 "verify"
               ]
             },
-            "description": "Replace \"otp\" with the real code.\n\nOn success the token, corporationId, zoneId and wardId are saved to the environment automatically."
+            "description": "Exchanges the code for a JWT.\n\nThe code comes from {{otp}}, which Send OTP filled in automatically. In production, replace it with the code from the SMS.\n\nOn success the token, corporationId, zoneId and wardId are saved to the environment.\n\nDo not retry with a wrong code: four failures deactivate the officer account."
           },
           "response": [],
           "event": [
