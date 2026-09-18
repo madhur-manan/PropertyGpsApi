@@ -117,7 +117,7 @@ builder.Services.Configure<ApiBehaviorOptions>(api =>
         { StatusCode = StatusCodes.Status400BadRequest };
 });
 
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(o => o.AddDocumentTransformer<OpenApiJwtTransformer>());
 
 // ---- Authentication ------------------------------------------------------
 var jwtOptions = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>()
@@ -231,6 +231,21 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
 // would otherwise return an empty body the client cannot parse.
 app.UseStatusCodePages(ErrorEnvelopeWriter.StatusCodeHandler);
 
+// Swagger UI over the document MapOpenApi serves below. Development only, for the reason
+// given there. Mounted before UseRouting deliberately: as ordinary middleware it never
+// enters endpoint routing, so neither the fallback authorization policy nor the
+// MapFallback catch-all applies - otherwise /swagger would answer with our "endpoint does
+// not exist" envelope instead of the UI.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwaggerUI(ui =>
+    {
+        ui.SwaggerEndpoint("/openapi/v1.json", "PropertyGpsApi v1");
+        ui.RoutePrefix = "swagger";
+        ui.DocumentTitle = "PropertyGpsApi";
+    });
+}
+
 app.UseRouting();
 app.UseRateLimiter();
 app.UseAuthentication();
@@ -253,7 +268,11 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 // URL looks to the client exactly like an expired token - and since 401 is reported
 // retryable, the app would sit there re-authenticating against a route that will never
 // exist. An anonymous catch-all gives it the honest answer.
-app.MapFallback(context => ErrorEnvelopeWriter.WriteAsync(
+//
+// The explicit "{*path}" matters: MapFallback defaults to "{*path:nonfile}", which skips
+// any URL whose last segment contains a dot. Without it /openapi/v1.json - and every
+// file-looking typo - matched no endpoint at all and came back 401 rather than 404.
+app.MapFallback("{*path}", context => ErrorEnvelopeWriter.WriteAsync(
     context, StatusCodes.Status404NotFound, ApiErrorCodes.NotFound,
     "The requested endpoint does not exist.")).AllowAnonymous();
 
@@ -261,7 +280,7 @@ app.MapFallback(context => ErrorEnvelopeWriter.WriteAsync(
 // every endpoint and field name for free.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi().AllowAnonymous();
 }
 
 app.Run();
