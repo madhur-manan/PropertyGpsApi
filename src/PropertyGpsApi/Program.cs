@@ -3,6 +3,8 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.HttpOverrides;
+using System.Net;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -45,6 +47,10 @@ builder.Services.AddOptions<DatabaseOptions>()
 
 builder.Services.AddOptions<StoredProcedureOptions>()
     .Bind(builder.Configuration.GetSection(StoredProcedureOptions.Section))
+    .ValidateDataAnnotations().ValidateOnStart();
+
+builder.Services.AddOptions<NetworkOptions>()
+    .Bind(builder.Configuration.GetSection(NetworkOptions.Section))
     .ValidateDataAnnotations().ValidateOnStart();
 
 builder.Services.AddOptions<MediaOptions>()
@@ -233,11 +239,47 @@ builder.Services.AddRateLimiter(rl =>
     };
 });
 
+// Behind a reverse proxy, RemoteIpAddress is the proxy unless X-Forwarded-For is honoured,
+// which makes the per-IP rate limiter below count all of BBMP as one client. Trust is
+// explicit: with no proxy configured the headers are ignored, because believing an
+// unauthenticated header would let a client forge a new identity per request and defeat
+// the limiter more thoroughly than the proxy does.
+var network = builder.Configuration.GetSection(NetworkOptions.Section).Get<NetworkOptions>()
+              ?? new NetworkOptions();
+
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.ForwardLimit = network.ForwardLimit;
+
+    // The framework trusts loopback by default. Clearing these lists is the usual way this
+    // gets "fixed" and it is exactly the mistake: it trusts everyone.
+    foreach (var proxy in network.KnownProxies)
+        if (IPAddress.TryParse(proxy, out var address)) o.KnownProxies.Add(address);
+
+    foreach (var cidr in network.KnownNetworks)
+        if (System.Net.IPNetwork.TryParse(cidr, out var ipNetwork))
+            o.KnownIPNetworks.Add(ipNetwork);
+});
+
 builder.Services.AddHealthChecks()
     .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"])
     .AddCheck<SqlServerHealthCheck>("sql", tags: ["ready"]);
 
 var app = builder.Build();
+
+// Say so, loudly, when the limiter is not actually limiting anybody. The framework trusts
+// loopback out of the box, so this looks fine on a developer machine and silently does
+// nothing once it is behind BBMP's proxy - the failure mode is invisible unless announced.
+if (!app.Environment.IsDevelopment()
+    && network.KnownProxies.Length == 0 && network.KnownNetworks.Length == 0)
+{
+    app.Logger.LogWarning(
+        "Network:KnownProxies and Network:KnownNetworks are both empty. X-Forwarded-For " +
+        "will be ignored, so the OTP rate limiter counts every officer behind the reverse " +
+        "proxy as one client and provides no practical protection. Configure the proxy " +
+        "address before treating this endpoint as rate limited.");
+}
 
 // ---- Pipeline (order matters) --------------------------------------------
 app.UseExceptionHandler(new ExceptionHandlerOptions
@@ -252,6 +294,9 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
 // Catches responses that never reach MVC at all - the routing 404, a 405, a 415 - which
 // would otherwise return an empty body the client cannot parse.
 app.UseStatusCodePages(ErrorEnvelopeWriter.StatusCodeHandler);
+
+// Must run before the rate limiter, which partitions on the client address.
+app.UseForwardedHeaders();
 
 // Swagger UI over the document MapOpenApi serves below. Development only, for the reason
 // given there. Mounted before UseRouting deliberately: as ordinary middleware it never
