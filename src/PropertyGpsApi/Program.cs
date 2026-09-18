@@ -16,6 +16,7 @@ using PropertyGpsApi.Features.Properties;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.Options;
 using PropertyGpsApi.Infrastructure.Security;
+using PropertyGpsApi.Infrastructure.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,6 +47,10 @@ builder.Services.AddOptions<StoredProcedureOptions>()
     .Bind(builder.Configuration.GetSection(StoredProcedureOptions.Section))
     .ValidateDataAnnotations().ValidateOnStart();
 
+builder.Services.AddOptions<MediaOptions>()
+    .Bind(builder.Configuration.GetSection(MediaOptions.Section))
+    .ValidateDataAnnotations().ValidateOnStart();
+
 builder.Services.AddOptions<OtpOptions>()
     .Bind(builder.Configuration.GetSection(OtpOptions.Section))
     .ValidateDataAnnotations().ValidateOnStart();
@@ -69,6 +74,8 @@ builder.Services.AddScoped<IPropertyRepository, PropertyRepository>();
 builder.Services.AddSingleton<IAssignmentReader, AssignmentReader>();
 builder.Services.AddScoped<IMasterRepository, MasterRepository>();
 builder.Services.AddScoped<IPushStatusRepository, PushStatusRepository>();
+builder.Services.AddScoped<IVerificationSubmitRepository, VerificationSubmitRepository>();
+builder.Services.AddScoped<ISubmitMediaBinder, SubmitMediaBinder>();
 
 // The OTP sender seam. DevelopmentOtpSender writes the code to the log, which is the whole
 // point of it, and exactly why selecting it outside Development must fail the process
@@ -94,6 +101,19 @@ switch (otpSender)
         break;
     default:
         throw new InvalidOperationException("Unknown Otp:Sender value: " + otpSender);
+}
+
+// Where captured photographs go. BBMP intend a separate object store; until its endpoint
+// exists LocalDisk is the real implementation, and swapping it is a config value plus a
+// new IMediaStore - nothing in the submit flow changes.
+var mediaStore = builder.Configuration[$"{MediaOptions.Section}:Store"] ?? "LocalDisk";
+switch (mediaStore)
+{
+    case "LocalDisk":
+        builder.Services.AddSingleton<IMediaStore, LocalDiskMediaStore>();
+        break;
+    default:
+        throw new InvalidOperationException("Unknown Media:Store value: " + mediaStore);
 }
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();

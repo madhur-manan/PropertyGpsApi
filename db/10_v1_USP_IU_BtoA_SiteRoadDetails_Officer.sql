@@ -32,6 +32,12 @@
       - docTrn_CBy and docTrn_CRole were hardcoded to 1, discarding which officer did
         the work. They now use @CBy and @CRole.
 
+    And one more, found while testing: SCOPE_IDENTITY() was read AFTER the
+    BtoA_DocumentTran insert, so for a private road the procedure returned the document
+    identity as RoadRowId. Any caller using that value was pointed at the wrong row. It is
+    now captured immediately after the road insert. This one is present in KhataBtoA_prod
+    too and should be raised with whoever owns that copy.
+
     SET XACT_ABORT ON is added because the API calls this inside a transaction it owns.
 
     The behaviour of the KSRSAC guard is deliberately unchanged: a road that does not
@@ -159,6 +165,11 @@ BEGIN
 
         );
 
+        -- Captured immediately, before anything else inserts. Read after the
+        -- BtoA_DocumentTran insert below, SCOPE_IDENTITY() returns the DOCUMENT id, so
+        -- every private road handed the caller back a road row id that was not a road.
+        SET @BtoA_RoadRowId = SCOPE_IDENTITY();
+
 		if(@BtoA_RoadType='Private')
 		begin
 		-- DocumentId carries the road, so two private roads on one property no longer
@@ -166,13 +177,23 @@ BEGIN
 		insert into BtoA_DocumentTran(docTrn_App_Id,docTrn_Mdoc_id,docTrn_Active,docTrn_url,docTrn_CBy,docTrn_CDte,docTrn_CRole,DigitalSketchUpload_flag, UniqueIdentifier, DocumentId)
 		values(@BtoA_MainAppId,4,1,@BtoA_Nearest_Private_Road_Document,@CBy,GETDATE(),@CRole,1,444,@BtoA_SiteRoadRowID)
 		end
-        SET @BtoA_RoadRowId = SCOPE_IDENTITY();
         SET @Message = 'Record inserted successfully';
         SET @ResultStatus = 1;
     END
     ELSE
     BEGIN
         -- UPDATE MODE
+        -- The insert branch sets @BtoA_RoadRowId from SCOPE_IDENTITY(); this branch never
+        -- set it at all, so a resubmission returned RoadRowId = 0 and any caller keying
+        -- off it - ours writes the served-notice document - silently did nothing.
+        SELECT @BtoA_RoadRowId = Ofcr_RowId
+          FROM [dbo].[BtoA_SiteRoadDetails_Officer]
+         WHERE Ofcr_App_Id = @BtoA_MainAppId
+           AND Ofcr_RoadId = @BtoA_RoadId
+           AND Ofcr_SiteRoadRowID = @BtoA_SiteRoadRowID
+           AND CRole = @CRole
+           AND CBy = @CBy;
+
         UPDATE [dbo].[BtoA_SiteRoadDetails_Officer]
         SET
             [Ofcr_App_Id] = @BtoA_MainAppId,

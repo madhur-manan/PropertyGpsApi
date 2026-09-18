@@ -1,9 +1,12 @@
 using System.Security.Claims;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PropertyGpsApi.Common;
 using PropertyGpsApi.Features.Properties.Dtos;
 using PropertyGpsApi.Infrastructure.Security;
+using PropertyGpsApi.Infrastructure.Storage;
 
 namespace PropertyGpsApi.Features.Properties;
 
@@ -13,7 +16,9 @@ namespace PropertyGpsApi.Features.Properties;
 public sealed class PropertyInfoController(
     IPropertyRepository properties,
     IApplicationRepository applications,
-    IPushStatusRepository pushStatus) : ControllerBase
+    IPushStatusRepository pushStatus,
+    IVerificationSubmitRepository submissions,
+    ISubmitMediaBinder mediaBinder) : ControllerBase
 {
     /// <summary>
     /// Step 3: the officer's ward worklist, which the app stores in SQLite for offline use.
@@ -122,6 +127,145 @@ public sealed class PropertyInfoController(
         return Ok(ApiResponse<PushStatusResponse>.Ok(
             result,
             message: $"{result.Accepted} accepted, {result.Rejected} rejected."));
+    }
+
+    /// <summary>
+    /// The completed survey coming back from the field. Multipart: one "payload" part
+    /// carrying the JSON, and any number of "files" parts. A survey field naming a file by
+    /// its basename is what binds that file to its slot.
+    /// </summary>
+    [HttpPost("add-new")]
+    [RequestSizeLimit(80 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 80 * 1024 * 1024, ValueLengthLimit = 8 * 1024 * 1024)]
+    [ProducesResponseType<ApiResponse<SubmitVerificationResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<SubmitVerificationResponse>>> AddNew(
+        [FromForm] string payload, CancellationToken ct)
+    {
+        var officerId = User.RequireLong(GpsClaims.UserId);
+        var roleId = (int)User.RequireLong(GpsClaims.RoleId);
+        var mobile = User.FindFirstValue("sub");
+
+        var request = ParsePayload(payload);
+
+        // A ward officer may only submit for their own ward, for the same reason fetch is
+        // scoped: the token says who you are, not what you may write to.
+        if (roleId == 116)
+        {
+            var ownWard = User.OptionalLong(GpsClaims.WardId);
+            if (ownWard is not null && ownWard != request.WardId)
+                throw ApiException.Forbidden(
+                    "You can only submit surveys for your own ward.",
+                    ApiErrorCodes.OutsideJurisdiction);
+        }
+
+        // Files are stored before the transaction opens and are never rolled back. An
+        // orphaned file costs disk; a committed row pointing at a photograph that was never
+        // written is evidence destroyed, and the device will have marked the record synced.
+        try
+        {
+            // Validation lives inside the try so a rejected answer and a rejected road
+            // return the same shape. Both are permanent for this payload and both are
+            // fixable by the officer.
+            Validate(request);
+
+            var mediaUrls = await mediaBinder.StoreAsync(request, Request.Form.Files, ct);
+
+            var result = await submissions.SubmitAsync(
+                request, mediaUrls, officerId, roleId, mobile, ct);
+
+            return Ok(ApiResponse<SubmitVerificationResponse>.Ok(
+                result, message: "Survey received."));
+        }
+        catch (SubmitRejectedException rejected)
+        {
+            // Nothing was written. The files are still on the server, so this is permanent
+            // for this payload but recoverable once the road details are corrected.
+            return UnprocessableEntity(new ApiResponse<SubmitVerificationResponse>
+            {
+                Success = false,
+                Code = rejected.Code,
+                Message = rejected.Summary,
+                Errors = rejected.Errors,
+                Retryable = false,
+                Recoverable = true,
+                TraceId = HttpContext.TraceIdentifier
+            });
+        }
+    }
+
+    private static SubmitVerificationRequest ParsePayload(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+            throw ApiException.BadRequest("The 'payload' part is missing.");
+
+        try
+        {
+            return JsonSerializer.Deserialize<SubmitVerificationRequest>(payload, PayloadJson)
+                ?? throw ApiException.BadRequest("The 'payload' part was empty.");
+        }
+        catch (JsonException ex)
+        {
+            throw ApiException.BadRequest("The 'payload' part is not valid JSON: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Strict on submit, and deliberately so: we own both ends of this contract, so an
+    /// unrecognised key means the client has drifted and should hear about it now rather
+    /// than have a field silently ignored.
+    /// </summary>
+    private static readonly JsonSerializerOptions PayloadJson = new(JsonSerializerDefaults.Web)
+    {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString
+    };
+
+    private static void Validate(SubmitVerificationRequest request)
+    {
+        var errors = new List<ApiError>();
+
+        if (string.IsNullOrWhiteSpace(request.ApplicationId))
+            errors.Add(new ApiError { Field = "applicationId", Code = "REQUIRED", Message = "The application id is required." });
+
+        if (string.IsNullOrWhiteSpace(request.Epid))
+            errors.Add(new ApiError { Field = "epid", Code = "REQUIRED", Message = "The EPID is required." });
+
+        // The justification is the whole evidentiary value of asserting government land.
+        if (request.IsGovtProperty == 1 && string.IsNullOrWhiteSpace(request.GovtPropertyDetails))
+            errors.Add(new ApiError
+            {
+                Field = "govtPropertyDetails",
+                Code = "REQUIRED",
+                Message = "Please describe why this is government property."
+            });
+
+        if (request.SiteDetails.RoadDetails.Count == 0)
+            errors.Add(new ApiError { Field = "siteDetails.roadDetails", Code = "REQUIRED", Message = "At least one road is required." });
+
+        // 0,0 is in the Gulf of Guinea. It is what a device reports when it never got a
+        // fix, and it is the commonest real GPS failure - worth catching here rather than
+        // storing a survey that places a Bengaluru property in the Atlantic.
+        RejectNullIsland(errors, "siteDetails.correctedLat", request.SiteDetails.CorrectedLat, request.SiteDetails.CorrectedLng);
+        foreach (var (road, i) in request.SiteDetails.RoadDetails.Select((r, i) => (r, i)))
+        {
+            RejectNullIsland(errors, $"siteDetails.roadDetails[{i}].privateRoadLat", road.PrivateRoadLat, road.PrivateRoadLng);
+            RejectNullIsland(errors, $"siteDetails.roadDetails[{i}].nearPublicRoadLat", road.NearPublicRoadLat, road.NearPublicRoadLng);
+        }
+
+        if (errors.Count > 0)
+            throw new SubmitRejectedException(errors);
+    }
+
+    private static void RejectNullIsland(List<ApiError> errors, string field, double? lat, double? lng)
+    {
+        if (lat is null || lng is null) return;
+        if (Math.Abs(lat.Value) < 0.0001 && Math.Abs(lng.Value) < 0.0001)
+            errors.Add(new ApiError
+            {
+                Field = field,
+                Code = "NO_GPS_FIX",
+                Message = "The device recorded no GPS fix for this point. Please capture it again."
+            });
     }
 }
 

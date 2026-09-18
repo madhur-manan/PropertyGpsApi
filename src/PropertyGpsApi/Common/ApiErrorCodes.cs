@@ -25,4 +25,16 @@ public static class ApiErrorCodes
     public const string QueueFull = "ASSIGNMENT_QUEUE_FULL";
     public const string ReassignLimitReached = "REASSIGN_LIMIT_REACHED";
     public const string AssignRejected = "ASSIGN_REJECTED";
+
+    public const string ApplicationNotFound = "APPLICATION_NOT_FOUND";
+    public const string NotAssignedToYou = "NOT_ASSIGNED_TO_YOU";
+    public const string RoadNotRecognised = "ROAD_NOT_RECOGNISED";
+    public const string SubmitRejected = "SUBMIT_REJECTED";
+    public const string SubmitInFlight = "SUBMIT_IN_FLIGHT";
+
+    public const string MediaMissing = "MEDIA_MISSING";
+    public const string MediaUnsupported = "MEDIA_UNSUPPORTED";
+    public const string MediaMismatch = "MEDIA_MISMATCH";
+    public const string MediaTruncated = "MEDIA_TRUNCATED";
+    public const string MediaTooLarge = "MEDIA_TOO_LARGE";
 }

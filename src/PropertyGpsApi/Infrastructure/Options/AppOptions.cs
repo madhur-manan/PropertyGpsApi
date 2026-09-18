@@ -80,6 +80,15 @@ public sealed class StoredProcedureOptions
     [Required(AllowEmptyStrings = false)] public string InsertNotPushed { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string FetchApplicationsCount { get; init; } = "";
 
+    [Required(AllowEmptyStrings = false)]
+    public string SubmitApplication { get; init; } = "";
+
+    [Required(AllowEmptyStrings = false)]
+    public string SubmitRoad { get; init; } = "";
+
+    [Required(AllowEmptyStrings = false)]
+    public string SubmitStatus { get; init; } = "";
+
     /// <summary>Written into Login_Tran.AppID so BBMP can tell this app's logins apart.</summary>
     [Required(AllowEmptyStrings = false)] public string AppId { get; init; } = "";
 }
