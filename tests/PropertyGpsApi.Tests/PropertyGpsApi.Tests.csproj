@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Without this the project compiles but can see nothing it is meant to test. -->
+    <ProjectReference Include="../../src/PropertyGpsApi/PropertyGpsApi.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 

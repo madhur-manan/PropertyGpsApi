@@ -36,4 +36,28 @@ public sealed class MastersController(IMasterRepository masters) : ControllerBas
         var wards = await masters.WardsAsync(zoneId, ct);
         return Ok(ApiResponse<IReadOnlyList<WardDto>>.Ok(wards));
     }
+
+    /// <summary>
+    /// The ward street master, for the road pickers on the survey form. Without it both
+    /// pickers degrade to free text and the road names stop matching the KSRSAC master.
+    /// </summary>
+    [HttpGet("streets")]
+    [ProducesResponseType<ApiResponse<IReadOnlyList<StreetDto>>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<StreetDto>>>> Streets(
+        [FromQuery] int corporationId, [FromQuery] int zoneId, [FromQuery] int wardId,
+        CancellationToken ct)
+    {
+        if (corporationId <= 0 || zoneId <= 0 || wardId <= 0)
+            throw ApiException.BadRequest("corporationId, zoneId and wardId are all required.");
+
+        var streets = await masters.StreetsAsync(corporationId, zoneId, wardId, ct);
+
+        return Ok(ApiResponse<IReadOnlyList<StreetDto>>.Ok(
+            streets,
+            page: new PageInfo
+            {
+                Start = 0, Range = streets.Count,
+                Returned = streets.Count, Total = streets.Count
+            }));
+    }
 }

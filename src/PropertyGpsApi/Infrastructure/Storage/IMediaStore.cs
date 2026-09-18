@@ -36,4 +36,15 @@ public sealed record StoredMedia(
 public interface IMediaStore
 {
     Task<StoredMedia> SaveAsync(MediaUpload upload, CancellationToken ct);
+
+    /// <summary>
+    /// Reads a stored file back. Returns null when it does not exist - the caller turns
+    /// that into a 404, and must return the same 404 for a file the officer may not see,
+    /// so the endpoint never answers the question "does this EPID exist".
+    /// </summary>
+    Task<StoredFile?> OpenAsync(string epid, string fileName, CancellationToken ct);
 }
+
+/// <summary>A stored file on its way back out. Bytes rather than a stream because the
+/// local store already has them and the cloud driver will fetch them whole anyway.</summary>
+public sealed record StoredFile(string FileName, string ContentType, byte[] Content);

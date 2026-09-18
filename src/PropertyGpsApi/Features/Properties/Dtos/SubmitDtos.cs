@@ -159,3 +159,18 @@ internal sealed class AppWriteRow
     public bool Status { get; init; }
     public int AppId { get; init; }
 }
+
+/// <summary>One previously submitted survey, for the Property History screen.</summary>
+public sealed class HistoryEntryDto
+{
+    [JsonPropertyName("applicationId")] public string? ApplicationId { get; init; }
+    [JsonPropertyName("epid")] public string? Epid { get; init; }
+    [JsonPropertyName("sasId")] public string? SasId { get; init; }
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
+    [JsonPropertyName("appStatus")] public int? AppStatus { get; init; }
+    [JsonPropertyName("submittedOn")] public DateTimeOffset? SubmittedOn { get; init; }
+    [JsonPropertyName("roadCount")] public int RoadCount { get; init; }
+    [JsonPropertyName("lastStatusId")] public int? LastStatusId { get; init; }
+    [JsonPropertyName("lastRemark")] public string? LastRemark { get; init; }
+}

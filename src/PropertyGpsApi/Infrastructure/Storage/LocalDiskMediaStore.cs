@@ -56,6 +56,44 @@ internal sealed class LocalDiskMediaStore(
     }
 
     /// <summary>
+    /// Names are server-generated and matched against a strict pattern before touching the
+    /// filesystem, so traversal is rejected on shape alone. The resolved path is then
+    /// checked to be under the configured root as well - belt and braces, because a single
+    /// mistake here reads arbitrary files off a government server.
+    /// </summary>
+    public async Task<StoredFile?> OpenAsync(string epid, string fileName, CancellationToken ct)
+    {
+        if (!SafeName.IsMatch(fileName)) return null;
+
+        var root = Path.GetFullPath(options.Value.RootPath);
+        var absolute = Path.GetFullPath(Path.Combine(root, SafeSegment(epid), fileName));
+
+        if (!absolute.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            logger.LogWarning("Rejected a media path that resolved outside the root: {Name}", fileName);
+            return null;
+        }
+
+        if (!File.Exists(absolute)) return null;
+
+        var content = await File.ReadAllBytesAsync(absolute, ct);
+        return new StoredFile(fileName, ContentTypeFor(Path.GetExtension(absolute)), content);
+    }
+
+    /// <summary>Matches exactly what BuildName produces and nothing else.</summary>
+    private static readonly System.Text.RegularExpressions.Regex SafeName =
+        new(@"^[A-Za-z0-9]+-[0-9]+-[A-Za-z]+-[0-9]{8}_[0-9]{6}-[a-f0-9]{8}.(jpg|png|pdf)$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string ContentTypeFor(string extension) => extension.ToLowerInvariant() switch
+    {
+        ".jpg" or ".jpeg" => MediaContentPolicy.Jpeg,
+        ".png" => MediaContentPolicy.Png,
+        ".pdf" => MediaContentPolicy.Pdf,
+        _ => "application/octet-stream"
+    };
+
+    /// <summary>
     /// The server names every file. The client's own name is only ever used to work out
     /// which slot a part belongs to, so traversal, absolute paths, alternate data streams
     /// and reserved device names are impossible here by construction rather than filtered.

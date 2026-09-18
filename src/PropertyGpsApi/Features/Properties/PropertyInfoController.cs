@@ -18,7 +18,10 @@ public sealed class PropertyInfoController(
     IApplicationRepository applications,
     IPushStatusRepository pushStatus,
     IVerificationSubmitRepository submissions,
-    ISubmitMediaBinder mediaBinder) : ControllerBase
+    ISubmitMediaBinder mediaBinder,
+    IMediaStore mediaStore,
+    IMediaAccessReader mediaAccess,
+    IHistoryRepository history) : ControllerBase
 {
     /// <summary>
     /// Step 3: the officer's ward worklist, which the app stores in SQLite for offline use.
@@ -191,6 +194,81 @@ public sealed class PropertyInfoController(
                 TraceId = HttpContext.TraceIdentifier
             });
         }
+    }
+
+    /// <summary>
+    /// Serves a stored survey photograph or note sheet. The route shape matches what
+    /// production already stores in the *_Document columns, so URLs written by this API and
+    /// by the existing system both resolve.
+    /// </summary>
+    [HttpGet("file/view/{epid}/{fileName}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ViewFile(string epid, string fileName, CancellationToken ct)
+    {
+        var roleId = (int)User.RequireLong(GpsClaims.RoleId);
+
+        // A missing file and a file outside the officer's jurisdiction return exactly the
+        // same 404. Distinguishing them would turn this endpoint into an oracle for which
+        // EPIDs exist, and the URLs are guessable - they carry only an EPID and a timestamp.
+        var scope = await mediaAccess.ScopeForAsync(epid, ct);
+        if (scope is null || !MayView(roleId, scope)) return FileNotFound();
+
+        var file = await mediaStore.OpenAsync(epid, fileName, ct);
+        if (file is null) return FileNotFound();
+
+        // Served as an attachment with a server-chosen name and no sniffing, so a file that
+        // somehow got past upload validation still cannot execute in a browser.
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+        Response.Headers["Cache-Control"] = "private, max-age=0, no-store";
+
+        return File(file.Content, file.ContentType, file.FileName);
+    }
+
+    private bool MayView(int roleId, MediaScope scope) => roleId switch
+    {
+        // Ward officer: their own ward only.
+        116 => User.OptionalLong(GpsClaims.WardId) is not { } ward || ward == scope.WardId,
+        // Zone officer: anywhere in their zone. Role 125 legitimately has a null ward.
+        125 => User.OptionalLong(GpsClaims.ZoneId) is not { } zone || zone == scope.ZoneId,
+        _ => false
+    };
+
+    private IActionResult FileNotFound() =>
+        NotFound(new ApiResponse<object>
+        {
+            Success = false,
+            Code = ApiErrorCodes.NotFound,
+            Message = "That file is not available.",
+            TraceId = HttpContext.TraceIdentifier
+        });
+
+    /// <summary>
+    /// The surveys this officer has already submitted.
+    ///
+    /// The officer comes from the token, never from the URL. The legacy shape was
+    /// history/{userId}, which invites one officer to read another one by editing a number.
+    /// </summary>
+    [HttpGet("history")]
+    [ProducesResponseType<ApiResponse<IReadOnlyList<HistoryEntryDto>>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<HistoryEntryDto>>>> History(
+        [FromQuery] int start = 0, [FromQuery] int range = 50, CancellationToken ct = default)
+    {
+        var officerId = User.RequireLong(GpsClaims.UserId);
+
+        if (start < 0) start = 0;
+        range = Math.Clamp(range, 1, 200);
+
+        var entries = await history.ForOfficerAsync(officerId, start, range, ct);
+        var total = await history.CountForOfficerAsync(officerId, ct);
+
+        return Ok(ApiResponse<IReadOnlyList<HistoryEntryDto>>.Ok(
+            entries,
+            page: new PageInfo
+            {
+                Start = start, Range = range,
+                Returned = entries.Count, Total = total
+            }));
     }
 
     private static SubmitVerificationRequest ParsePayload(string payload)

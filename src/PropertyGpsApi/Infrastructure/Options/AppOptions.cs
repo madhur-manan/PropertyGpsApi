@@ -81,6 +81,9 @@ public sealed class StoredProcedureOptions
     [Required(AllowEmptyStrings = false)] public string FetchApplicationsCount { get; init; } = "";
 
     [Required(AllowEmptyStrings = false)]
+    public string FetchStreets { get; init; } = "";
+
+    [Required(AllowEmptyStrings = false)]
     public string SubmitApplication { get; init; } = "";
 
     [Required(AllowEmptyStrings = false)]
