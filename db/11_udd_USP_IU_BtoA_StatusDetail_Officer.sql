@@ -1,7 +1,7 @@
 /*
-    USP_IU_BtoA_StatusDetail_Officer - corrected for KhataBtoA_prod_v1.
+    USP_IU_BtoA_StatusDetail_Officer - corrected for UDD_KHATABTOA_TEST.
 
-    APPLIES TO KhataBtoA_prod_v1 ONLY.
+    APPLIES TO UDD_KHATABTOA_TEST ONLY.
 
     The procedure chooses the new application status from @CRole, but only had branches
     for 117 and 118. The Single Plot GPS app signs in as a Revenue Inspector, role 116,
@@ -31,11 +31,11 @@
     SET XACT_ABORT ON is added because the API calls this inside a transaction it owns.
 */
 
-USE KhataBtoA_prod_v1;
+USE UDD_KHATABTOA_TEST;
 GO
 
-IF DB_NAME() <> 'KhataBtoA_prod_v1'
-    THROW 50001, 'Refusing to run: this script is for KhataBtoA_prod_v1 only.', 1;
+IF DB_NAME() <> 'UDD_KHATABTOA_TEST'
+    THROW 50001, 'Refusing to run: this script is for UDD_KHATABTOA_TEST only.', 1;
 GO
 
 

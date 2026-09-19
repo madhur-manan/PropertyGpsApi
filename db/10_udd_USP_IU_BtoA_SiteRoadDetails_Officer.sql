@@ -1,7 +1,7 @@
 /*
-    USP_IU_BtoA_SiteRoadDetails_Officer - corrected for KhataBtoA_prod_v1.
+    USP_IU_BtoA_SiteRoadDetails_Officer - corrected for UDD_KHATABTOA_TEST.
 
-    APPLIES TO KhataBtoA_prod_v1 ONLY. Do not run against KhataBtoA_prod: the live
+    APPLIES TO UDD_KHATABTOA_TEST ONLY. Do not run against KhataBtoA_prod: the live
     database still uses the pre-rename column names (BtoA_MainAppId, BtoA_RoadId,
     docTrn_KRS_Id, ...) and its own copy of this procedure is already correct.
 
@@ -46,11 +46,11 @@
     that per-road Status and must not assume success.
 */
 
-USE KhataBtoA_prod_v1;
+USE UDD_KHATABTOA_TEST;
 GO
 
-IF DB_NAME() <> 'KhataBtoA_prod_v1'
-    THROW 50001, 'Refusing to run: this script is for KhataBtoA_prod_v1 only.', 1;
+IF DB_NAME() <> 'UDD_KHATABTOA_TEST'
+    THROW 50001, 'Refusing to run: this script is for UDD_KHATABTOA_TEST only.', 1;
 GO
 
 CREATE OR ALTER PROCEDURE [dbo].[USP_IU_BtoA_SiteRoadDetails_Officer]

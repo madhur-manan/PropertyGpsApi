@@ -2,7 +2,7 @@
     Two small procedures owned entirely by PropertyGpsApi, writing the columns added in
     12_v1_SubmitSchema_Additions.sql.
 
-    APPLIES TO KhataBtoA_prod_v1 ONLY.
+    APPLIES TO UDD_KHATABTOA_TEST ONLY.
 
     Why not extend USP_IU_BtoA_MainApp_Officer and USP_IU_BtoA_SiteRoadDetails_Officer
     with more optional parameters: those two are called by the JC portal and the QC
@@ -14,11 +14,11 @@
     same transaction, so the rows they target already exist.
 */
 
-USE KhataBtoA_prod_v1;
+USE UDD_KHATABTOA_TEST;
 GO
 
-IF DB_NAME() <> 'KhataBtoA_prod_v1'
-    THROW 50001, 'Refusing to run: this script is for KhataBtoA_prod_v1 only.', 1;
+IF DB_NAME() <> 'UDD_KHATABTOA_TEST'
+    THROW 50001, 'Refusing to run: this script is for UDD_KHATABTOA_TEST only.', 1;
 GO
 
 -------------------------------------------------------------------------------

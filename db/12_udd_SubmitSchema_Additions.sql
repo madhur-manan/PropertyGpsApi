@@ -1,7 +1,7 @@
 /*
     Columns the Single Plot GPS app collects that currently have nowhere to be stored.
 
-    APPLIES TO KhataBtoA_prod_v1 ONLY.
+    APPLIES TO UDD_KHATABTOA_TEST ONLY.
 
     Every statement is additive, nullable and guarded, so the script is safe to re-run and
     changes no existing row, index or query plan. Nothing is dropped or retyped.
@@ -28,11 +28,11 @@
       readers; the int carries the full answer.
 */
 
-USE KhataBtoA_prod_v1;
+USE UDD_KHATABTOA_TEST;
 GO
 
-IF DB_NAME() <> 'KhataBtoA_prod_v1'
-    THROW 50001, 'Refusing to run: this script is for KhataBtoA_prod_v1 only.', 1;
+IF DB_NAME() <> 'UDD_KHATABTOA_TEST'
+    THROW 50001, 'Refusing to run: this script is for UDD_KHATABTOA_TEST only.', 1;
 GO
 
 -------------------------------------------------------------------------------

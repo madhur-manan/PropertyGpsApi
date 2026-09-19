@@ -1,7 +1,7 @@
 /*
-    Test data for the fetch -> submit pipeline in KhataBtoA_prod_v1.
+    Test data for the fetch -> submit pipeline in UDD_KHATABTOA_TEST.
 
-    APPLIES TO KhataBtoA_prod_v1 ONLY. The equivalent for the live database is
+    APPLIES TO UDD_KHATABTOA_TEST ONLY. The equivalent for the live database is
     TestData_ResetPushedFlag.sql; keep the two separate so neither can be run against the
     wrong server by accident.
 
@@ -13,15 +13,15 @@
     applications; resetting all of them would hand a device an unrealistic first sync and
     churn a lot of state for no extra test value.
 
-    Previous values are saved to ZZ_PropertyGpsApi_PushedFlagBackup_v1 first, so section 3
+    Previous values are saved to ZZ_PropertyGpsApi_PushedFlagBackup_udd first, so section 3
     restores each record exactly rather than blanket-setting them back to 1.
 */
 
-USE KhataBtoA_prod_v1;
+USE UDD_KHATABTOA_TEST;
 GO
 
-IF DB_NAME() <> 'KhataBtoA_prod_v1'
-    THROW 50001, 'Refusing to run: this script is for KhataBtoA_prod_v1 only.', 1;
+IF DB_NAME() <> 'UDD_KHATABTOA_TEST'
+    THROW 50001, 'Refusing to run: this script is for UDD_KHATABTOA_TEST only.', 1;
 GO
 
 DECLARE @ZoneId  int = 102;   -- Mahadevapura
@@ -43,14 +43,14 @@ WHERE ap.App_Active = 1 AND md.MD_ZoneId = @ZoneId AND md.MD_WardId = @WardId;
 -------------------------------------------------------------------------------
 -- 2. APPLY - mark @HowMany of them undelivered
 -------------------------------------------------------------------------------
-IF OBJECT_ID('dbo.ZZ_PropertyGpsApi_PushedFlagBackup_v1') IS NULL
-    CREATE TABLE dbo.ZZ_PropertyGpsApi_PushedFlagBackup_v1
+IF OBJECT_ID('dbo.ZZ_PropertyGpsApi_PushedFlagBackup_udd') IS NULL
+    CREATE TABLE dbo.ZZ_PropertyGpsApi_PushedFlagBackup_udd
     (
         App_Id            int PRIMARY KEY,
         IsPushedToGps     bit           NULL,
         PushedToGpsDate   datetime      NULL,
         PushedToGpsRemark nvarchar(max) NULL,
-        BackedUpOn        datetime      NOT NULL CONSTRAINT DF_ZZ_PgpsBackup_v1 DEFAULT (GETDATE())
+        BackedUpOn        datetime      NOT NULL CONSTRAINT DF_ZZ_PgpsBackup_udd DEFAULT (GETDATE())
     );
 
 BEGIN TRAN;
@@ -68,17 +68,17 @@ BEGIN TRAN;
           AND md.MD_WardId = @WardId
         ORDER BY ap.App_Id DESC
     )
-    INSERT INTO dbo.ZZ_PropertyGpsApi_PushedFlagBackup_v1 (App_Id, IsPushedToGps, PushedToGpsDate, PushedToGpsRemark)
+    INSERT INTO dbo.ZZ_PropertyGpsApi_PushedFlagBackup_udd (App_Id, IsPushedToGps, PushedToGpsDate, PushedToGpsRemark)
     SELECT t.App_Id, t.IsPushedToGps, t.PushedToGpsDate, t.PushedToGpsRemark
     FROM target t
-    WHERE NOT EXISTS (SELECT 1 FROM dbo.ZZ_PropertyGpsApi_PushedFlagBackup_v1 b WHERE b.App_Id = t.App_Id);
+    WHERE NOT EXISTS (SELECT 1 FROM dbo.ZZ_PropertyGpsApi_PushedFlagBackup_udd b WHERE b.App_Id = t.App_Id);
 
     UPDATE ap
        SET ap.IsPushedToGps     = 0,
            ap.PushedToGpsDate   = NULL,
            ap.PushedToGpsRemark = NULL
     FROM BtoAMainApp ap
-    JOIN dbo.ZZ_PropertyGpsApi_PushedFlagBackup_v1 b ON b.App_Id = ap.App_Id;
+    JOIN dbo.ZZ_PropertyGpsApi_PushedFlagBackup_udd b ON b.App_Id = ap.App_Id;
 
     SELECT ResetCount = @@ROWCOUNT;
 
@@ -95,8 +95,8 @@ BEGIN TRAN;
            ap.PushedToGpsDate   = b.PushedToGpsDate,
            ap.PushedToGpsRemark = b.PushedToGpsRemark
     FROM BtoAMainApp ap
-    JOIN dbo.ZZ_PropertyGpsApi_PushedFlagBackup_v1 b ON b.App_Id = ap.App_Id;
+    JOIN dbo.ZZ_PropertyGpsApi_PushedFlagBackup_udd b ON b.App_Id = ap.App_Id;
     SELECT RestoredCount = @@ROWCOUNT;
-    DELETE FROM dbo.ZZ_PropertyGpsApi_PushedFlagBackup_v1;
+    DELETE FROM dbo.ZZ_PropertyGpsApi_PushedFlagBackup_udd;
 COMMIT TRAN;
 */

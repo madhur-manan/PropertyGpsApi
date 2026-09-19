@@ -1,8 +1,8 @@
 /*
     Tr_BtoA_StatusDetail_Officer and Ofcr_StatusRowId_HistId - corrected for
-    KhataBtoA_prod_v1.
+    UDD_KHATABTOA_TEST.
 
-    APPLIES TO KhataBtoA_prod_v1 ONLY.
+    APPLIES TO UDD_KHATABTOA_TEST ONLY.
 
     The same rename fallout as 14, on the status table. Both triggers copy the updated row
     into BtoA_StatusDetail_Officer_Hist, reading from "inserted" - which mirrors
@@ -31,11 +31,11 @@
     rename caused - KhataBtoA_prod has both as well - but it looks unintended.
 */
 
-USE KhataBtoA_prod_v1;
+USE UDD_KHATABTOA_TEST;
 GO
 
-IF DB_NAME() <> 'KhataBtoA_prod_v1'
-    THROW 50001, 'Refusing to run: this script is for KhataBtoA_prod_v1 only.', 1;
+IF DB_NAME() <> 'UDD_KHATABTOA_TEST'
+    THROW 50001, 'Refusing to run: this script is for UDD_KHATABTOA_TEST only.', 1;
 GO
 
 CREATE OR ALTER TRIGGER [dbo].[Tr_BtoA_StatusDetail_Officer]

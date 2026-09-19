@@ -17,7 +17,7 @@ public interface IHistoryRepository
 ///
 /// Not backed by USP_S_BtoA_GpsDashData_v1 at level 3, despite that being the branch
 /// labelled "Rejected and completed". Two reasons, both verified against the server:
-/// in KhataBtoA_prod_v1 it names columns the rename removed and fails outright, and in
+/// in UDD_KHATABTOA_TEST it names columns the rename removed and fails outright, and in
 /// KhataBtoA_prod it runs but can never return a row, because its filter reads
 ///
 ///     where SD.Status_Id not in (11,200) and SD.Status_Id in (11,200)
