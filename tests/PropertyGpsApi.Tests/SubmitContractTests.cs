@@ -95,3 +95,51 @@ public class SubmitContractTests
             $"{dto.Name} is missing [JsonPropertyName] on: {string.Join(", ", missing)}");
     }
 }
+
+/// <summary>
+/// Status_Id in BtoA_StatusDetail_Officer is a verdict code in this system's own
+/// vocabulary, not an App_Status. Live rows show 10 = APPROVED, 11 = REJECTED and
+/// 12 = RETURN_TO_RI, so recording the wrong one misreports what the officer decided
+/// to everyone downstream who reads that row.
+/// </summary>
+public class OfficerVerdictTests
+{
+    private static (int StatusId, string? StatusValue) Verdict(string? recommendation)
+    {
+        var method = typeof(PropertyGpsApi.Features.Properties.VerificationSubmitRepository)
+            .GetMethod("VerdictFor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        return ((int, string?))method.Invoke(null, [recommendation])!;
+    }
+
+    [Theory]
+    [InlineData("Reject")]
+    [InlineData("Rejected")]
+    [InlineData("REJECT")]
+    public void A_rejection_is_never_recorded_as_an_approval(string recommendation)
+    {
+        var (statusId, statusValue) = Verdict(recommendation);
+        Assert.Equal(11, statusId);
+        Assert.Equal("REJECTED", statusValue);
+    }
+
+    [Theory]
+    [InlineData("Approve")]
+    [InlineData("Approved")]
+    public void An_approval_uses_the_vocabulary_already_in_the_table(string recommendation)
+    {
+        var (statusId, statusValue) = Verdict(recommendation);
+        Assert.Equal(10, statusId);
+        Assert.Equal("APPROVED", statusValue);
+    }
+
+    /// <summary>
+    /// An ordinary BtoAKhata survey is a verification, not a decision. Recording a default
+    /// verdict would assert something the officer never said.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void No_recommendation_records_no_verdict(string? recommendation)
+        => Assert.Null(Verdict(recommendation).StatusValue);
+}

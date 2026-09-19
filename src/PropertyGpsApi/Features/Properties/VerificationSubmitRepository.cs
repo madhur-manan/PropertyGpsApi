@@ -307,10 +307,15 @@ internal sealed class VerificationSubmitRepository(
         p.Add("@Ofcr_ApplicationDisplayId", request.ApplicationId, DbType.String, size: 50);
         p.Add("@Ofcr_Mobile_Number", officerMobile, DbType.String, size: 15);
         p.Add("@Status_Date", request.VerifiedDate.UtcDateTime, DbType.DateTime);
-        p.Add("@Status_Id", 10, DbType.Int32);
+        // Status_Id here is a VERDICT code in this procedure vocabulary, not an App_Status:
+        // live rows show 10 = APPROVED, 11 = REJECTED, 12 = RETURN_TO_RI. Hardcoding 10
+        // recorded every submission as an approval, including one where the officer had
+        // recommended rejection.
+        var (statusId, statusValue) = VerdictFor(request.KhataRecommendation);
+        p.Add("@Status_Id", statusId, DbType.Int32);
         p.Add("@Status_Remark", request.Remark, DbType.String, size: -1);
         p.Add("@Status_Rejected_Reason", (string?)null, DbType.String, size: -1);
-        p.Add("@Status_Value", request.KhataRecommendation?.ToUpperInvariant(), DbType.String, size: 100);
+        p.Add("@Status_Value", statusValue, DbType.String, size: 100);
         p.Add("@CBy", officerId, DbType.Int64);
         p.Add("@CRole", roleId, DbType.Int32);
         p.Add("@isAutoEscalated", false, DbType.Boolean);
@@ -336,6 +341,32 @@ internal sealed class VerificationSubmitRepository(
             // undone either way, and masking the original failure would be worse.
         }
     }
+
+    /// <summary>
+    /// Maps the officer recommendation onto the vocabulary already in use in
+    /// BtoA_StatusDetail_Officer, rather than inventing one: APPROVED and REJECTED, with
+    /// the past tense that QC and JC rows use, and the matching 10/11 code.
+    ///
+    /// A khata recommendation only applies to a SinglePlotApproval; an ordinary BtoAKhata
+    /// survey is a verification, not a decision, so it is recorded with no verdict rather
+    /// than a default one. Either way App_Status becomes 13 - our role branch does not read
+    /// these - but the stored row is what QC and JC actually look at.
+    ///
+    /// Mst_AppStatus also defines 30 "Approved By RI" and 25 "Rejected By RI". Nothing in
+    /// the database writes either, so they are left alone until BBMP say what should.
+    /// </summary>
+    private static (int StatusId, string? StatusValue) VerdictFor(string? recommendation)
+    {
+        var value = recommendation?.Trim();
+        if (string.IsNullOrEmpty(value)) return (ApproveCode, null);
+
+        return value.StartsWith("Reject", StringComparison.OrdinalIgnoreCase)
+            ? (RejectCode, "REJECTED")
+            : (ApproveCode, "APPROVED");
+    }
+
+    private const int ApproveCode = 10;
+    private const int RejectCode = 11;
 
     private static bool? AsBit(int? value) => value switch { null => null, 0 => false, _ => true };
     private static bool? AsBit(bool value) => value;
