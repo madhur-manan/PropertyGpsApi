@@ -190,7 +190,14 @@ internal sealed class OfficerRepository(
                 {
                     GbaZoneId = r.GbaZoneId,
                     GbaZoneName = r.GbaZoneName,
-                    ZoneId = r.BbmpZoneId ?? r.GbaZoneId,
+                    // zoneId is what the device sends back on every ward request, and the
+                    // fetch procedure matches it against MD_ZoneId - a GBA zone id. This
+                    // returned the BBMP zone instead (Mahadevapura: 2 rather than 102), so
+                    // an officer who reopened the app and had their session restored through
+                    // this path asked for a zone that holds no applications and was told
+                    // their ward was empty. The OTP path has always returned the GBA id;
+                    // the two disagreeing is what made the bug invisible until a restart.
+                    ZoneId = r.GbaZoneId ?? r.BbmpZoneId,
                     ZoneName = r.BbmpZoneName ?? r.GbaZoneName,
                     WardId = r.BbmpWardId,
                     WardName = r.BbmpWardName,
