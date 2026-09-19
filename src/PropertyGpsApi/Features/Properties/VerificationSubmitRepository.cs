@@ -78,6 +78,13 @@ internal sealed class VerificationSubmitRepository(
             await WriteExtrasAsync(connection, transaction, request, mediaUrls, ct);
             await WriteStatusAsync(connection, transaction, sp, request, appId.Value, officerId, roleId, officerMobile, ct);
 
+            // Read the status back rather than reporting a constant. The procedure decides
+            // it from the role, so a copy here could drift from what was actually written
+            // and the response would confidently state something untrue.
+            var appStatus = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
+                "SELECT App_Status FROM BtoAMainApp WHERE App_Id = @id",
+                new { id = appId.Value }, transaction, 30, CommandType.Text, cancellationToken: ct));
+
             await transaction.CommitAsync(ct);
 
             logger.LogInformation(
@@ -88,7 +95,7 @@ internal sealed class VerificationSubmitRepository(
             {
                 ApplicationId = request.ApplicationId,
                 Epid = request.Epid,
-                AppStatus = SubmittedStatusId,
+                AppStatus = appStatus ?? 0,
                 RoadsStored = roadsStored,
                 MediaStored = mediaUrls.Count,
                 StoredUtc = DateTimeOffset.UtcNow
@@ -101,12 +108,13 @@ internal sealed class VerificationSubmitRepository(
         }
     }
 
-    /// <summary>
-    /// "Data Received from RI" in masterDB_prod.dbo.Mst_AppStatus. The status procedure
-    /// derives this from the role; it is repeated here only so the response can state what
-    /// the application moved to without a second round trip.
-    /// </summary>
-    private const int SubmittedStatusId = 13;
+    // App_Status after a submit is 13, "Data Received from RI", and the status procedure
+    // derives that from the role rather than taking it from us. It is not duplicated here:
+    // the value is read back above, so the response always reports what was really written.
+    //
+    // Mst_AppStatus also defines 30 "Approved By RI" and 25 "Rejected By RI". BBMP have
+    // confirmed those are reserved for a future flow and nothing writes them today, so the
+    // officer recommendation is carried on the status row instead - see VerdictFor.
 
     private static async Task TakeApplicationLockAsync(
         SqlConnection connection, SqlTransaction transaction, string applicationId, CancellationToken ct)
