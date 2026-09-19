@@ -146,7 +146,11 @@ public sealed class PropertyInfoController(
     {
         var officerId = User.RequireLong(GpsClaims.UserId);
         var roleId = (int)User.RequireLong(GpsClaims.RoleId);
-        var mobile = User.FindFirstValue("sub");
+        // The mobile claim, not sub. sub carries the officer id, and
+        // USP_IU_BtoA_StatusDetail_Officer looks the officer up BY MOBILE to stamp the
+        // audit trail - so passing the id left BtoA_Status_Master_Tran with no officer
+        // attribution at all, silently.
+        var mobile = User.FindFirstValue(GpsClaims.Mobile);
 
         var request = ParsePayload(payload);
 

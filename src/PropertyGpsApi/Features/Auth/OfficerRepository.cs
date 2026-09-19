@@ -12,6 +12,9 @@ public interface IOfficerRepository
     Task<long> StoreOtpAsync(string mobile, string otp, CancellationToken ct);
     Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct);
     Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct);
+
+    /// <summary>Loads an officer without an OTP, for rehydrating a session from a token.</summary>
+    Task<Officer?> LoadAsync(string mobile, CancellationToken ct);
 }
 
 public enum OtpValidationOutcome
@@ -129,6 +132,90 @@ internal sealed class OfficerRepository(
         };
 
         return new OtpValidationResult(OtpValidationOutcome.Valid, officer);
+    }
+
+    /// <summary>
+    /// The same officer and jurisdictions the OTP flow returns, without requiring a code.
+    ///
+    /// USP_S_Officer_ValidateOTP cannot serve this: it demands a valid OTP, which is
+    /// exactly what a client holding a still-valid token does not have. The app is
+    /// offline-first and keeps its session across restarts, so without this an officer
+    /// reopening the app in the morning would be asked to sign in again despite holding a
+    /// perfectly good token.
+    ///
+    /// Reads the tables directly, which also closes the gap noted above: the procedure
+    /// returns BBMPWardName but never BBMPWardId, so its wards can be displayed but not
+    /// used to build a fetch request. Here both come back.
+    /// </summary>
+    private const string LoadSql = """
+        SELECT o.Ofcr_Id, o.Ofcr_RoleId, o.Ofcr_MNo, o.Ofcr_Name, o.Ofcr_ZoneId, o.Ofcr_WardId,
+               CorporationId   = aro.easthiULBNAME_CorpId,
+               CorporationName = aro.cityCorportationName,
+               GbaZoneId       = aro.GBAZoneID,
+               GbaZoneName     = aro.GBAZoneName_En,
+               BbmpZoneId      = aro.BBMPZoneID,
+               BbmpZoneName    = aro.BBMPZoneName,
+               BbmpWardId      = aro.BBMPWardId,
+               BbmpWardName    = aro.BBMPWardName
+        FROM dbo.mst_Officer o WITH (NOLOCK)
+        LEFT JOIN dbo.mst_AROMapping aro WITH (NOLOCK)
+               ON aro.GBAZoneID = o.Ofcr_ZoneId AND aro.BBMPWardId = o.Ofcr_WardId
+        WHERE o.Ofcr_MNo = @mobile AND ISNULL(o.Ofcr_Active, 0) = 1;
+        """;
+
+    public async Task<Officer?> LoadAsync(string mobile, CancellationToken ct)
+    {
+        await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
+        var rows = (await connection.QueryAsync<OfficerLoadRow>(
+            new CommandDefinition(LoadSql, new { mobile }, cancellationToken: ct))).AsList();
+
+        if (rows.Count == 0) return null;
+        var first = rows[0];
+
+        return new Officer
+        {
+            OfficerId = first.Ofcr_Id,
+            RoleId = first.Ofcr_RoleId,
+            Mobile = first.Ofcr_MNo,
+            Name = first.Ofcr_Name,
+            CorporationId = first.CorporationId,
+            CorporationName = first.CorporationName,
+            ZoneId = first.Ofcr_ZoneId,
+            WardId = first.Ofcr_WardId,
+            Jurisdictions = rows
+                .Where(r => r.BbmpWardId is not null)
+                .GroupBy(r => (r.GbaZoneId, r.BbmpWardId))
+                .Select(g => g.First())
+                .Select(r => new Jurisdiction
+                {
+                    GbaZoneId = r.GbaZoneId,
+                    GbaZoneName = r.GbaZoneName,
+                    ZoneId = r.BbmpZoneId ?? r.GbaZoneId,
+                    ZoneName = r.BbmpZoneName ?? r.GbaZoneName,
+                    WardId = r.BbmpWardId,
+                    WardName = r.BbmpWardName,
+                    CorporationId = r.CorporationId,
+                    CorporationName = r.CorporationName
+                }).ToList()
+        };
+    }
+
+    private sealed class OfficerLoadRow
+    {
+        public long Ofcr_Id { get; init; }
+        public int Ofcr_RoleId { get; init; }
+        public string? Ofcr_MNo { get; init; }
+        public string? Ofcr_Name { get; init; }
+        public int? Ofcr_ZoneId { get; init; }
+        public int? Ofcr_WardId { get; init; }
+        public int? CorporationId { get; init; }
+        public string? CorporationName { get; init; }
+        public int? GbaZoneId { get; init; }
+        public string? GbaZoneName { get; init; }
+        public int? BbmpZoneId { get; init; }
+        public string? BbmpZoneName { get; init; }
+        public int? BbmpWardId { get; init; }
+        public string? BbmpWardName { get; init; }
     }
 
     public async Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct)

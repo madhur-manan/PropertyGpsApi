@@ -11,6 +11,14 @@ public sealed class PropertyDto
     [JsonPropertyName("appId")] public int AppId { get; init; }
     [JsonPropertyName("applicationId")] public string? ApplicationId { get; init; }
     [JsonPropertyName("epid")] public string? Epid { get; init; }
+    /// <summary>
+    /// Every owner on the application, joined into one line. The officer's list shows this:
+    /// nobody recognises a property by its EPID, they recognise it by whose it is.
+    /// </summary>
+    [JsonPropertyName("ownerNames")] public string? OwnerNames { get; init; }
+
+    [JsonPropertyName("ownerNumbers")] public string? OwnerNumbers { get; init; }
+
     [JsonPropertyName("sasId")] public string? SasId { get; init; }
     [JsonPropertyName("applicationType")] public string? ApplicationType { get; init; }
     [JsonPropertyName("appType")] public string? AppType { get; init; }

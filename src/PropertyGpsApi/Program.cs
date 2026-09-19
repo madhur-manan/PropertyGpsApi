@@ -78,6 +78,7 @@ builder.Services.AddScoped<IOtpService, OtpService>();
 builder.Services.AddScoped<IApplicationRepository, ApplicationRepository>();
 builder.Services.AddScoped<IPropertyRepository, PropertyRepository>();
 builder.Services.AddSingleton<IAssignmentReader, AssignmentReader>();
+builder.Services.AddSingleton<IOwnerReader, OwnerReader>();
 builder.Services.AddScoped<IMasterRepository, MasterRepository>();
 builder.Services.AddScoped<IPushStatusRepository, PushStatusRepository>();
 builder.Services.AddScoped<IVerificationSubmitRepository, VerificationSubmitRepository>();

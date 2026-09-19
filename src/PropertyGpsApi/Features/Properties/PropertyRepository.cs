@@ -21,6 +21,7 @@ internal sealed class PropertyRepository(
     ISqlConnectionFactory connections,
     IOptions<StoredProcedureOptions> procedures,
     IAssignmentReader assignments,
+    IOwnerReader owners,
     ILogger<PropertyRepository> logger) : IPropertyRepository
 {
     /// <summary>
@@ -51,23 +52,26 @@ internal sealed class PropertyRepository(
         // rows for the same application. Group rather than letting the application duplicate.
         var grouped = rows.GroupBy(r => r.AppID).ToList();
 
-        var assignmentsByApp = await assignments.ActiveForAsync(
-            connection, grouped.Select(g => g.Key).ToList(), ct);
+        var appIds = grouped.Select(g => g.Key).ToList();
+        var assignmentsByApp = await assignments.ActiveForAsync(connection, appIds, ct);
+        var ownersByApp = await owners.ForAsync(connection, appIds, ct);
 
         logger.LogInformation(
             "Fetched {Apps} applications ({Rows} rows) for officer {OfficerId} zone {Zone} ward {Ward}",
             grouped.Count, rows.Count, officerId, request.ZoneId, request.WardId);
 
-        return grouped.Select(g => Map(g, assignmentsByApp, officerId)).ToList();
+        return grouped.Select(g => Map(g, assignmentsByApp, ownersByApp, officerId)).ToList();
     }
 
     private static PropertyDto Map(
         IGrouping<int, PropertyRow> group,
         IReadOnlyDictionary<int, AssignmentRow> assignments,
+        IReadOnlyDictionary<int, OwnerSummary> owners,
         long officerId)
     {
         var row = group.First();
         assignments.TryGetValue(group.Key, out var held);
+        owners.TryGetValue(group.Key, out var owner);
 
         return new PropertyDto
         {
@@ -75,6 +79,8 @@ internal sealed class PropertyRepository(
             ApplicationId = row.AppDisplayId,
             Epid = row.MotherEPID,
             SasId = row.MotherSASID,
+            OwnerNames = owner?.Names,
+            OwnerNumbers = owner?.Numbers,
             ApplicationType = row.ApplicationType,
             AppType = row.Type,
             Status = row.Status,
