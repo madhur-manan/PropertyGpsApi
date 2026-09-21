@@ -28,6 +28,19 @@ public interface IHistoryRepository
 /// </summary>
 internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHistoryRepository
 {
+    /// <summary>
+    /// masterDB_prod.dbo.Mst_Roles: 116 Case Worker, 117 RI, 118 QC, 125 Joint
+    /// Commissioner. BtoA_StatusDetail_Officer is a shared transition log that every
+    /// role writes to, so the newest row on an application is usually the officer's
+    /// own submit remark, not QC's.
+    ///
+    /// The yellow "QC Remarks" panel in the app must show what QC said. Reading the
+    /// newest row of any role would print the officer their own note back under QC's
+    /// name, which is worse than showing nothing - so the QC lookup is scoped to this
+    /// role explicitly.
+    /// </summary>
+    private const int QcRoleId = 118;
+
     private const string PageSql = """
         SELECT
             ApplicationId = mao.Ofcr_ApplicationDisplayId,
@@ -40,7 +53,13 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
             RoadCount     = (SELECT COUNT(*) FROM dbo.BtoA_SiteRoadDetails_Officer rd WITH (NOLOCK)
                              WHERE rd.Ofcr_ApplicationDisplayId = mao.Ofcr_ApplicationDisplayId),
             LastRemark    = sd.Status_Remark,
-            LastStatusId  = sd.Status_Id
+            LastStatusId  = sd.Status_Id,
+            AppliedOn     = ap.App_Cdte,
+            OwnerName     = own.Names,
+            OwnerMobile   = own.Numbers,
+            QcRemark      = qc.Status_Remark,
+            QcOutcome     = qc.Status_Value,
+            QcActedOn     = qc.CDte
         FROM dbo.BtoA_MainApp_Officer mao WITH (NOLOCK)
         LEFT JOIN dbo.BtoAMainApp ap WITH (NOLOCK)
                ON ap.App_DisplayId = mao.Ofcr_ApplicationDisplayId
@@ -53,6 +72,20 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
               AND s.Status_Active = 1
             ORDER BY s.CDte DESC
         ) sd
+        OUTER APPLY (
+            SELECT TOP (1) q.Status_Remark, q.Status_Value, q.Status_Id, q.CDte
+            FROM dbo.BtoA_StatusDetail_Officer q WITH (NOLOCK)
+            WHERE q.Ofcr_ApplicationDisplayId = mao.Ofcr_ApplicationDisplayId
+              AND q.Status_Active = 1
+              AND q.CRole = @qcRole
+            ORDER BY q.CDte DESC
+        ) qc
+        OUTER APPLY (
+            SELECT Names   = STRING_AGG(NULLIF(LTRIM(RTRIM(o.Own_OwnerName)), N''), N', '),
+                   Numbers = STRING_AGG(NULLIF(LTRIM(RTRIM(o.Own_Mobile)), N''), N', ')
+            FROM dbo.BtoA_OwnerDetails o WITH (NOLOCK)
+            WHERE o.Own_App_Id = ap.App_Id AND ISNULL(o.own_active, 1) = 1
+        ) own
         WHERE mao.CBy = @officerId
         ORDER BY COALESCE(mao.UDte, mao.CDte) DESC
         OFFSET @start ROWS FETCH NEXT @range ROWS ONLY;
@@ -67,7 +100,7 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
     {
         await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
         var rows = await connection.QueryAsync<HistoryEntryDto>(
-            new CommandDefinition(PageSql, new { officerId, start, range },
+            new CommandDefinition(PageSql, new { officerId, start, range, qcRole = QcRoleId },
                 commandTimeout: 60, cancellationToken: ct));
         return rows.AsList();
     }

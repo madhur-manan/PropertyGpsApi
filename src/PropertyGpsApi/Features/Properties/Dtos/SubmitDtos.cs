@@ -173,4 +173,10 @@ public sealed class HistoryEntryDto
     [JsonPropertyName("roadCount")] public int RoadCount { get; init; }
     [JsonPropertyName("lastStatusId")] public int? LastStatusId { get; init; }
     [JsonPropertyName("lastRemark")] public string? LastRemark { get; init; }
+    [JsonPropertyName("appliedOn")] public DateTimeOffset? AppliedOn { get; init; }
+    [JsonPropertyName("ownerName")] public string? OwnerName { get; init; }
+    [JsonPropertyName("ownerMobile")] public string? OwnerMobile { get; init; }
+    [JsonPropertyName("qcRemark")] public string? QcRemark { get; init; }
+    [JsonPropertyName("qcOutcome")] public string? QcOutcome { get; init; }
+    [JsonPropertyName("qcActedOn")] public DateTimeOffset? QcActedOn { get; init; }
 }
