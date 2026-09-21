@@ -411,14 +411,3 @@ public sealed class PropertyInfoController(
             });
     }
 }
-
-internal static class ClaimsPrincipalExtensions
-{
-    public static long RequireLong(this ClaimsPrincipal user, string claimType) =>
-        long.TryParse(user.FindFirstValue(claimType), out var value)
-            ? value
-            : throw ApiException.Unauthorized("Your session is not valid. Please sign in again.");
-
-    public static long? OptionalLong(this ClaimsPrincipal user, string claimType) =>
-        long.TryParse(user.FindFirstValue(claimType), out var value) ? value : null;
-}

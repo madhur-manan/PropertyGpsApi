@@ -126,25 +126,58 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
     }
 
     /// <summary>
-    /// The verdict buckets, and the one place the SQL side defines them.
+    /// The verdict buckets — the one place the SQL side defines them.
+    ///
+    /// Held as data rather than only as SQL text so the tests can assert on the
+    /// codes themselves. They previously read the generated SQL back by
+    /// reflection and regexed it, which made re-indenting the query a test
+    /// failure and let a rename become a NullReferenceException.
     ///
     /// These MUST agree with AppStatus.verdict in the Flutter app
-    /// (lib/models/single_site/single_site_property.dart). A code in neither
-    /// list still counts toward Total, so the four buckets can sum to less than
-    /// the total rather than a stray code being quietly filed as "approved".
+    /// (lib/models/single_site/single_site_property.dart), or a card's badge and
+    /// the counter above it disagree about the same survey.
     ///
     /// 10 is deliberately in no bucket: masterDB_prod.dbo.Mst_AppStatus defines
-    /// it twice, with no column to tell the two meanings apart.
+    /// it twice, with no column to tell the two meanings apart. A code in no
+    /// bucket still counts toward Total, so the four can sum to less than the
+    /// total rather than a stray code being quietly filed as "approved".
     /// </summary>
-    private const string VerdictSums = """
-                Total    = COUNT(*),
-                Pending  = SUM(CASE WHEN ap.App_Status = 13                        THEN 1 ELSE 0 END),
-                Approved = SUM(CASE WHEN ap.App_Status IN (14, 30, 150, 200, 300)  THEN 1 ELSE 0 END),
-                Rejected = SUM(CASE WHEN ap.App_Status IN (12, 25, 110)            THEN 1 ELSE 0 END),
-                Returned = SUM(CASE WHEN ap.App_Status = 400                       THEN 1 ELSE 0 END)
-        """;
+    internal static readonly int[] PendingCodes = [13];
 
-    private const string DailySql = $"""
+    /// 14 QC approved, 30 approved by RI, 150 JC approved,
+    /// 200 Commissioner approved, 300 payment done.
+    internal static readonly int[] ApprovedCodes = [14, 30, 150, 200, 300];
+
+    /// 12 rejected QC, 25 rejected by RI, 110 JC rejected.
+    internal static readonly int[] RejectedCodes = [12, 25, 110];
+
+    /// Returned for re-verification. Its own bucket, not a rejection — the
+    /// officer has work to redo, which is different from being told no.
+    internal static readonly int[] ReturnedCodes = [400];
+
+    /// <summary>
+    /// Total is COUNT(*), not the sum of the four buckets, so an unrecognised
+    /// code shows up as a gap between them rather than being absorbed.
+    /// </summary>
+    internal static readonly string VerdictSums = string.Join(",\n", [
+        "        Total    = COUNT(*)",
+        $"        Pending  = {Bucket(PendingCodes)}",
+        $"        Approved = {Bucket(ApprovedCodes)}",
+        $"        Rejected = {Bucket(RejectedCodes)}",
+        $"        Returned = {Bucket(ReturnedCodes)}",
+    ]);
+
+    /// <summary>
+    /// Codes are inlined rather than parameterised on purpose: they are a fixed
+    /// part of the query's shape, not user input, so inlining keeps one cached
+    /// plan instead of one per bucket size.
+    /// </summary>
+    private static string Bucket(int[] codes) =>
+        codes.Length == 1
+            ? $"SUM(CASE WHEN ap.App_Status = {codes[0]} THEN 1 ELSE 0 END)"
+            : $"SUM(CASE WHEN ap.App_Status IN ({string.Join(", ", codes)}) THEN 1 ELSE 0 END)";
+
+    private static readonly string DailySql = $"""
         SELECT
                 Day = DAY(COALESCE(mao.UDte, mao.CDte)),
         {VerdictSums}

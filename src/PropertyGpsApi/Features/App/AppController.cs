@@ -2,10 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PropertyGpsApi.Common;
 using PropertyGpsApi.Features.App.Dtos;
-// RequireLong lives with the Properties controller; shared by two features now, so it
-// belongs in Infrastructure.Security beside GpsClaims. Left where it is for now rather
-// than moving a helper the submit path depends on as a side effect of this change.
-using PropertyGpsApi.Features.Properties;
 using PropertyGpsApi.Infrastructure.Security;
 
 namespace PropertyGpsApi.Features.App;

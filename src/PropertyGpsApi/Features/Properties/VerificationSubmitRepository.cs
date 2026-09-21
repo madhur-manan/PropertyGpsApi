@@ -363,7 +363,11 @@ internal sealed class VerificationSubmitRepository(
     /// Mst_AppStatus also defines 30 "Approved By RI" and 25 "Rejected By RI". Nothing in
     /// the database writes either, so they are left alone until BBMP say what should.
     /// </summary>
-    private static (int StatusId, string? StatusValue) VerdictFor(string? recommendation)
+    // internal, not private, so the tests can call it directly. Reaching it by
+    // reflection meant a rename turned into a NullReferenceException at runtime
+    // instead of a compile error - on the one mapping that decides whether an
+    // officer is recorded as having approved or rejected a khata.
+    internal static (int StatusId, string? StatusValue) VerdictFor(string? recommendation)
     {
         var value = recommendation?.Trim();
         if (string.IsNullOrEmpty(value)) return (ApproveCode, null);

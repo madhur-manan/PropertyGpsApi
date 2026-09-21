@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using PropertyGpsApi.Features.Properties;
 using PropertyGpsApi.Features.Properties.Dtos;
 
 namespace PropertyGpsApi.Tests;
@@ -104,12 +105,15 @@ public class SubmitContractTests
 /// </summary>
 public class OfficerVerdictTests
 {
-    private static (int StatusId, string? StatusValue) Verdict(string? recommendation)
-    {
-        var method = typeof(PropertyGpsApi.Features.Properties.VerificationSubmitRepository)
-            .GetMethod("VerdictFor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-        return ((int, string?))method.Invoke(null, [recommendation])!;
-    }
+    // A direct call, not reflection. This used to be
+    //     GetMethod("VerdictFor", NonPublic | Static)!
+    // which meant renaming the method turned eight passing tests into a
+    // NullReferenceException at runtime rather than a compile error - on the one
+    // mapping that decides whether an officer is recorded as having approved or
+    // rejected a khata. VerdictFor is `internal` and the test project already has
+    // InternalsVisibleTo, so the compiler checks this now.
+    private static (int StatusId, string? StatusValue) Verdict(string? recommendation) =>
+        VerificationSubmitRepository.VerdictFor(recommendation);
 
     [Theory]
     [InlineData("Reject")]
