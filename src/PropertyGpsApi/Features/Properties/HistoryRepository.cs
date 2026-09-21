@@ -1,18 +1,35 @@
 using Dapper;
 using PropertyGpsApi.Features.Properties.Dtos;
 using PropertyGpsApi.Infrastructure.Data;
+using PropertyGpsApi.Common;
 
 namespace PropertyGpsApi.Features.Properties;
 
+/// <summary>One page of history, with the total the page came out of.</summary>
+public sealed record HistoryPage(IReadOnlyList<HistoryEntryDto> Entries, int Total, int Start, int Range);
+
 public interface IHistoryRepository
 {
-    Task<IReadOnlyList<HistoryEntryDto>> ForOfficerAsync(
+    /// <summary>
+    /// One page of this officer's submitted surveys, and the total they were
+    /// drawn from. Returns both together because a page and its total have to
+    /// agree — fetching them through two calls let a survey submitted between
+    /// them produce a page whose count did not match its own total.
+    ///
+    /// <paramref name="start"/> and <paramref name="range"/> are clamped here
+    /// rather than at the edge, so every caller gets the same bounds.
+    /// </summary>
+    Task<HistoryPage> PageForOfficerAsync(
         long officerId, int start, int range, CancellationToken ct);
 
-    Task<int> CountForOfficerAsync(long officerId, CancellationToken ct);
-
+    /// <summary>
+    /// One month of this officer's work. A null year or month means the current
+    /// month, decided by the server's clock rather than the caller's — a phone
+    /// with a wrong date would otherwise ask for the wrong month and get a
+    /// confidently empty answer.
+    /// </summary>
     Task<VerificationSummaryDto> SummaryForOfficerAsync(
-        long officerId, int year, int month, CancellationToken ct);
+        long officerId, int? year, int? month, CancellationToken ct);
 }
 
 /// <summary>
@@ -29,7 +46,9 @@ public interface IHistoryRepository
 /// screens, this is a plain read over the officer tables - scoped to one officer, so it
 /// is ours to own.
 /// </summary>
-internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHistoryRepository
+internal sealed class HistoryRepository(
+    ISqlConnectionFactory connections,
+    TimeProvider clock) : IHistoryRepository
 {
     /// <summary>
     /// masterDB_prod.dbo.Mst_Roles: 116 Case Worker, 117 RI, 118 QC, 125 Joint
@@ -108,21 +127,29 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
         SELECT COUNT(*) FROM dbo.BtoA_MainApp_Officer WITH (NOLOCK) WHERE CBy = @officerId;
         """;
 
-    public async Task<IReadOnlyList<HistoryEntryDto>> ForOfficerAsync(
+    public async Task<HistoryPage> PageForOfficerAsync(
         long officerId, int start, int range, CancellationToken ct)
     {
-        await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
-        var rows = await connection.QueryAsync<HistoryEntryDto>(
-            new CommandDefinition(PageSql, new { officerId, start, range, qcRole = QcRoleId },
-                commandTimeout: 60, cancellationToken: ct));
-        return rows.AsList();
-    }
+        // Clamped here, not at the edge, so every caller gets the same bounds.
+        // The upper bound exists because the page is unfiltered - an officer
+        // with a thousand surveys asking for all of them would hold a
+        // connection open building one response nothing renders.
+        if (start < 0) start = 0;
+        range = Math.Clamp(range, 1, 200);
 
-    public async Task<int> CountForOfficerAsync(long officerId, CancellationToken ct)
-    {
+        // One connection for the page and its total. They used to be two calls
+        // on two connections, which left a window where a survey submitted
+        // between them produced a page whose count did not match its own total.
         await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
-        return await connection.ExecuteScalarAsync<int>(
+
+        var rows = (await connection.QueryAsync<HistoryEntryDto>(
+            new CommandDefinition(PageSql, new { officerId, start, range, qcRole = QcRoleId },
+                commandTimeout: 60, cancellationToken: ct))).AsList();
+
+        var total = await connection.ExecuteScalarAsync<int>(
             new CommandDefinition(CountSql, new { officerId }, cancellationToken: ct));
+
+        return new HistoryPage(rows, total, start, range);
     }
 
     /// <summary>
@@ -205,9 +232,23 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
         """;
 
     public async Task<VerificationSummaryDto> SummaryForOfficerAsync(
-        long officerId, int year, int month, CancellationToken ct)
+        long officerId, int? year, int? month, CancellationToken ct)
     {
-        var from = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        // The server's clock, not the caller's. A phone with a wrong date would
+        // otherwise ask for the wrong month and get a confidently empty answer.
+        var today = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
+        var y = year ?? today.Year;
+        var m = month ?? today.Month;
+
+        // Rejected rather than clamped. A client asking for month 13 has a bug,
+        // and silently answering for December would hide it behind plausible
+        // figures an officer might act on.
+        if (m < 1 || m > 12)
+            throw ApiException.BadRequest("'month' must be between 1 and 12.");
+        if (y < 2000 || y > today.Year + 1)
+            throw ApiException.BadRequest("'year' is out of range.");
+
+        var from = new DateTime(y, m, 1, 0, 0, 0, DateTimeKind.Unspecified);
         var to = from.AddMonths(1);
 
         await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
@@ -222,8 +263,8 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
 
         return new VerificationSummaryDto
         {
-            Year = year,
-            Month = month,
+            Year = y,
+            Month = m,
             Total = days.Sum(d => d.Total),
             Pending = days.Sum(d => d.Pending),
             Approved = days.Sum(d => d.Approved),
@@ -232,7 +273,7 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
             Daily = days.Select(d => new DailyVerificationDto
             {
                 Day = d.Day,
-                Date = new DateTime(year, month, d.Day).ToString("yyyy-MM-dd"),
+                Date = new DateTime(y, m, d.Day).ToString("yyyy-MM-dd"),
                 Total = d.Total,
                 Pending = d.Pending,
                 Approved = d.Approved,

@@ -218,20 +218,15 @@ public sealed class PropertyInfoController(
     public async Task<ActionResult<ApiResponse<IReadOnlyList<HistoryEntryDto>>>> History(
         [FromQuery] int start = 0, [FromQuery] int range = 50, CancellationToken ct = default)
     {
-        var officerId = User.RequireLong(GpsClaims.UserId);
-
-        if (start < 0) start = 0;
-        range = Math.Clamp(range, 1, 200);
-
-        var entries = await history.ForOfficerAsync(officerId, start, range, ct);
-        var total = await history.CountForOfficerAsync(officerId, ct);
+        var page = await history.PageForOfficerAsync(
+            User.RequireLong(GpsClaims.UserId), start, range, ct);
 
         return Ok(ApiResponse<IReadOnlyList<HistoryEntryDto>>.Ok(
-            entries,
+            page.Entries,
             page: new PageInfo
             {
-                Start = start, Range = range,
-                Returned = entries.Count, Total = total
+                Start = page.Start, Range = page.Range,
+                Returned = page.Entries.Count, Total = page.Total
             }));
     }
 
@@ -250,25 +245,11 @@ public sealed class PropertyInfoController(
     [HttpGet("history/summary")]
     [ProducesResponseType<ApiResponse<VerificationSummaryDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<VerificationSummaryDto>>> HistorySummary(
-        [FromQuery] int? year = null, [FromQuery] int? month = null, CancellationToken ct = default)
-    {
-        var officerId = User.RequireLong(GpsClaims.UserId);
+        [FromQuery] int? year = null, [FromQuery] int? month = null, CancellationToken ct = default) =>
+        Ok(ApiResponse<VerificationSummaryDto>.Ok(
+            await history.SummaryForOfficerAsync(
+                User.RequireLong(GpsClaims.UserId), year, month, ct)));
 
-        var today = DateTime.Today;
-        var y = year ?? today.Year;
-        var m = month ?? today.Month;
-
-        // Rejected rather than clamped. A client asking for month 13 has a bug,
-        // and silently answering for December would hide it behind plausible
-        // figures an officer might act on.
-        if (m < 1 || m > 12)
-            throw ApiException.BadRequest("'month' must be between 1 and 12.");
-        if (y < 2000 || y > today.Year + 1)
-            throw ApiException.BadRequest("'year' is out of range.");
-
-        return Ok(ApiResponse<VerificationSummaryDto>.Ok(
-            await history.SummaryForOfficerAsync(officerId, y, m, ct)));
-    }
     private static SubmitVerificationRequest ParsePayload(string payload)
     {
         if (string.IsNullOrWhiteSpace(payload))
