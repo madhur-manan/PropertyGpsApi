@@ -179,4 +179,5 @@ public sealed class HistoryEntryDto
     [JsonPropertyName("qcRemark")] public string? QcRemark { get; init; }
     [JsonPropertyName("qcOutcome")] public string? QcOutcome { get; init; }
     [JsonPropertyName("qcActedOn")] public DateTimeOffset? QcActedOn { get; init; }
+    [JsonPropertyName("streetName")] public string? StreetName { get; init; }
 }

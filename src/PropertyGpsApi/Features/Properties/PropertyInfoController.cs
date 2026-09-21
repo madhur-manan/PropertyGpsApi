@@ -275,6 +275,40 @@ public sealed class PropertyInfoController(
             }));
     }
 
+
+    /// <summary>
+    /// One month of this officer's own work, for the Verification History screen.
+    ///
+    /// Counted by submission date, not by the citizen's application date: the
+    /// screen answers "what did I do this month", and a survey filed in September
+    /// against an August application is September's work.
+    ///
+    /// Defaults to the current month. The officer comes from the token for the
+    /// same reason the history list does - a userId in the URL invites one
+    /// officer to read another's figures by editing a number.
+    /// </summary>
+    [HttpGet("history/summary")]
+    [ProducesResponseType<ApiResponse<VerificationSummaryDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<VerificationSummaryDto>>> HistorySummary(
+        [FromQuery] int? year = null, [FromQuery] int? month = null, CancellationToken ct = default)
+    {
+        var officerId = User.RequireLong(GpsClaims.UserId);
+
+        var today = DateTime.Today;
+        var y = year ?? today.Year;
+        var m = month ?? today.Month;
+
+        // Rejected rather than clamped. A client asking for month 13 has a bug,
+        // and silently answering for December would hide it behind plausible
+        // figures an officer might act on.
+        if (m < 1 || m > 12)
+            throw ApiException.BadRequest("'month' must be between 1 and 12.");
+        if (y < 2000 || y > today.Year + 1)
+            throw ApiException.BadRequest("'year' is out of range.");
+
+        return Ok(ApiResponse<VerificationSummaryDto>.Ok(
+            await history.SummaryForOfficerAsync(officerId, y, m, ct)));
+    }
     private static SubmitVerificationRequest ParsePayload(string payload)
     {
         if (string.IsNullOrWhiteSpace(payload))

@@ -10,6 +10,9 @@ public interface IHistoryRepository
         long officerId, int start, int range, CancellationToken ct);
 
     Task<int> CountForOfficerAsync(long officerId, CancellationToken ct);
+
+    Task<VerificationSummaryDto> SummaryForOfficerAsync(
+        long officerId, int year, int month, CancellationToken ct);
 }
 
 /// <summary>
@@ -59,7 +62,17 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
             OwnerMobile   = own.Numbers,
             QcRemark      = qc.Status_Remark,
             QcOutcome     = qc.Status_Value,
-            QcActedOn     = qc.CDte
+            QcActedOn     = qc.CDte,
+            -- The street the officer navigates by, taken from the roads they
+            -- actually submitted. ActualRoadName is what they typed when the
+            -- citizen's declaration was wrong, so it wins over RoadName.
+            StreetName    = (SELECT TOP (1) COALESCE(NULLIF(LTRIM(RTRIM(rn.Ofcr_ActualRoadName)), N''),
+                                                     NULLIF(LTRIM(RTRIM(rn.Ofcr_RoadName)), N''))
+                             FROM dbo.BtoA_SiteRoadDetails_Officer rn WITH (NOLOCK)
+                             WHERE rn.Ofcr_ApplicationDisplayId = mao.Ofcr_ApplicationDisplayId
+                               AND COALESCE(NULLIF(LTRIM(RTRIM(rn.Ofcr_ActualRoadName)), N''),
+                                            NULLIF(LTRIM(RTRIM(rn.Ofcr_RoadName)), N'')) IS NOT NULL
+                             ORDER BY rn.Ofcr_SiteRoadRowID)
         FROM dbo.BtoA_MainApp_Officer mao WITH (NOLOCK)
         LEFT JOIN dbo.BtoAMainApp ap WITH (NOLOCK)
                ON ap.App_DisplayId = mao.Ofcr_ApplicationDisplayId
@@ -110,5 +123,100 @@ internal sealed class HistoryRepository(ISqlConnectionFactory connections) : IHi
         await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
         return await connection.ExecuteScalarAsync<int>(
             new CommandDefinition(CountSql, new { officerId }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// The verdict buckets, and the one place the SQL side defines them.
+    ///
+    /// These MUST agree with AppStatus.verdict in the Flutter app
+    /// (lib/models/single_site/single_site_property.dart). A code in neither
+    /// list still counts toward Total, so the four buckets can sum to less than
+    /// the total rather than a stray code being quietly filed as "approved".
+    ///
+    /// 10 is deliberately in no bucket: masterDB_prod.dbo.Mst_AppStatus defines
+    /// it twice, with no column to tell the two meanings apart.
+    /// </summary>
+    private const string VerdictSums = """
+                Total    = COUNT(*),
+                Pending  = SUM(CASE WHEN ap.App_Status = 13                        THEN 1 ELSE 0 END),
+                Approved = SUM(CASE WHEN ap.App_Status IN (14, 30, 150, 200, 300)  THEN 1 ELSE 0 END),
+                Rejected = SUM(CASE WHEN ap.App_Status IN (12, 25, 110)            THEN 1 ELSE 0 END),
+                Returned = SUM(CASE WHEN ap.App_Status = 400                       THEN 1 ELSE 0 END)
+        """;
+
+    private const string DailySql = $"""
+        SELECT
+                Day = DAY(COALESCE(mao.UDte, mao.CDte)),
+        {VerdictSums}
+        FROM dbo.BtoA_MainApp_Officer mao WITH (NOLOCK)
+        LEFT JOIN dbo.BtoAMainApp ap WITH (NOLOCK)
+               ON ap.App_DisplayId = mao.Ofcr_ApplicationDisplayId
+        WHERE mao.CBy = @officerId
+          AND COALESCE(mao.UDte, mao.CDte) >= @from
+          AND COALESCE(mao.UDte, mao.CDte) <  @to
+        GROUP BY DAY(COALESCE(mao.UDte, mao.CDte))
+        ORDER BY 1;
+        """;
+
+    /// <summary>
+    /// Newest first. Built from the same submitted-on date the daily breakdown
+    /// groups by, so the picker can never offer a month that then reads zero.
+    /// </summary>
+    private const string MonthsSql = """
+        SELECT DISTINCT
+            Ym = FORMAT(COALESCE(mao.UDte, mao.CDte), 'yyyy-MM')
+        FROM dbo.BtoA_MainApp_Officer mao WITH (NOLOCK)
+        WHERE mao.CBy = @officerId
+          AND COALESCE(mao.UDte, mao.CDte) IS NOT NULL
+        ORDER BY 1 DESC;
+        """;
+
+    public async Task<VerificationSummaryDto> SummaryForOfficerAsync(
+        long officerId, int year, int month, CancellationToken ct)
+    {
+        var from = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        var to = from.AddMonths(1);
+
+        await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
+
+        var days = (await connection.QueryAsync<DailyRow>(
+            new CommandDefinition(DailySql, new { officerId, from, to },
+                commandTimeout: 60, cancellationToken: ct))).AsList();
+
+        var months = (await connection.QueryAsync<string>(
+            new CommandDefinition(MonthsSql, new { officerId },
+                commandTimeout: 60, cancellationToken: ct))).AsList();
+
+        return new VerificationSummaryDto
+        {
+            Year = year,
+            Month = month,
+            Total = days.Sum(d => d.Total),
+            Pending = days.Sum(d => d.Pending),
+            Approved = days.Sum(d => d.Approved),
+            Rejected = days.Sum(d => d.Rejected),
+            Returned = days.Sum(d => d.Returned),
+            Daily = days.Select(d => new DailyVerificationDto
+            {
+                Day = d.Day,
+                Date = new DateTime(year, month, d.Day).ToString("yyyy-MM-dd"),
+                Total = d.Total,
+                Pending = d.Pending,
+                Approved = d.Approved,
+                Rejected = d.Rejected,
+                Returned = d.Returned,
+            }).ToList(),
+            MonthsWithWork = months,
+        };
+    }
+
+    private sealed class DailyRow
+    {
+        public int Day { get; init; }
+        public int Total { get; init; }
+        public int Pending { get; init; }
+        public int Approved { get; init; }
+        public int Rejected { get; init; }
+        public int Returned { get; init; }
     }
 }
