@@ -15,6 +15,7 @@ using PropertyGpsApi.Common;
 using PropertyGpsApi.Features.Auth;
 using PropertyGpsApi.Features.Masters;
 using PropertyGpsApi.Features.Properties;
+using PropertyGpsApi.Features.App;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.External;
 using PropertyGpsApi.Infrastructure.Options;
@@ -90,6 +91,7 @@ builder.Services.AddScoped<IVerificationSubmitRepository, VerificationSubmitRepo
 builder.Services.AddScoped<ISubmitMediaBinder, SubmitMediaBinder>();
 builder.Services.AddScoped<IMediaAccessReader, MediaAccessReader>();
 builder.Services.AddScoped<IHistoryRepository, HistoryRepository>();
+builder.Services.AddScoped<IAppVersionRepository, AppVersionRepository>();
 
 // The OTP sender seam. DevelopmentOtpSender writes the code to the log, which is the whole
 // point of it, and exactly why selecting it outside Development must fail the process

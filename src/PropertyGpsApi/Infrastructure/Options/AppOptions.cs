@@ -92,6 +92,13 @@ public sealed class StoredProcedureOptions
     [Required(AllowEmptyStrings = false)]
     public string SubmitStatus { get; init; } = "";
 
+    /// <summary>
+    /// USP_CheckMobileAppVersion. Reads masterDB_prod.dbo.Mst_AppVersion and writes a row
+    /// to BtoA_AppVersion_CheckLog, so a version check is a write, not a read.
+    /// </summary>
+    [Required(AllowEmptyStrings = false)]
+    public string CheckAppVersion { get; init; } = "";
+
     /// <summary>Written into Login_Tran.AppID so BBMP can tell this app's logins apart.</summary>
     [Required(AllowEmptyStrings = false)] public string AppId { get; init; } = "";
 }
