@@ -17,7 +17,6 @@ using PropertyGpsApi.Features.Masters;
 using PropertyGpsApi.Features.Properties;
 using PropertyGpsApi.Features.App;
 using PropertyGpsApi.Infrastructure.Data;
-using PropertyGpsApi.Infrastructure.External;
 using PropertyGpsApi.Infrastructure.Options;
 using PropertyGpsApi.Infrastructure.Security;
 using PropertyGpsApi.Infrastructure.Storage;
@@ -53,10 +52,6 @@ builder.Services.AddOptions<StoredProcedureOptions>()
 
 builder.Services.AddOptions<NetworkOptions>()
     .Bind(builder.Configuration.GetSection(NetworkOptions.Section))
-    .ValidateDataAnnotations().ValidateOnStart();
-
-builder.Services.AddOptions<BhoomiOptions>()
-    .Bind(builder.Configuration.GetSection(BhoomiOptions.Section))
     .ValidateDataAnnotations().ValidateOnStart();
 
 builder.Services.AddOptions<MediaOptions>()
@@ -118,15 +113,6 @@ switch (otpSender)
     default:
         throw new InvalidOperationException("Unknown Otp:Sender value: " + otpSender);
 }
-
-// Karnataka's land records, for the government-land question. Registered whether or not it
-// is configured: an unconfigured one answers UNAVAILABLE, which is the honest answer and
-// keeps a deployment without credentials from failing to start.
-builder.Services.AddHttpClient<IBhoomiClient, BhoomiClient>((sp, client) =>
-{
-    var bhoomi = sp.GetRequiredService<IOptions<BhoomiOptions>>().Value;
-    client.Timeout = TimeSpan.FromSeconds(bhoomi.TimeoutSeconds);
-});
 
 // Where captured photographs go. BBMP intend a separate object store; until its endpoint
 // exists LocalDisk is the real implementation, and swapping it is a config value plus a
