@@ -16,6 +16,13 @@ public static class MediaContentPolicy
     public const string Pdf = "application/pdf";
 
     /// <summary>
+    /// What a client sends when it has not worked out the type. Most HTTP stacks default
+    /// to it - Dart's http package does for every multipart file - so it is an absence of
+    /// a claim, not a false one, and is judged as such below.
+    /// </summary>
+    private const string Unspecified = "application/octet-stream";
+
+    /// <summary>
     /// The khata note sheet is the only slot an officer may photograph OR attach as a
     /// PDF. Everything else is a camera capture, so a PDF there means the client is
     /// confused and we would rather find out now than at QC.
@@ -49,7 +56,15 @@ public static class MediaContentPolicy
                 $"'{clientFileName}' is incomplete. Please capture it again.",
                 ApiErrorCodes.MediaTruncated, recoverable: true);
 
+        // A declared type is only checked when the client actually declared one. Treating
+        // "application/octet-stream" as a contradiction cost a completed survey: the phone
+        // sent a perfectly good JPEG under that default, the mismatch raised a 422, and a
+        // 422 parks the record permanently with no way back from the app. The bytes and the
+        // extension are checked above regardless, so nothing is being taken on trust here.
+        //
+        // A SPECIFIC wrong claim is still a lie and still fails.
         if (!string.IsNullOrWhiteSpace(declaredContentType)
+            && !declaredContentType.StartsWith(Unspecified, StringComparison.OrdinalIgnoreCase)
             && !declaredContentType.StartsWith(sniffed, StringComparison.OrdinalIgnoreCase))
             throw ApiException.Unprocessable(
                 $"'{clientFileName}' was sent as {declaredContentType} but is a {sniffed}.",

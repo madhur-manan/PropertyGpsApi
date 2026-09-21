@@ -39,6 +39,39 @@ public class MediaContentPolicyTests
             MediaContentPolicy.Resolve("note.pdf", "application/pdf", Pdf(),
                 MediaContentPolicy.NoteSheetSlot));
 
+    // A client that does not declare a type has not made a claim to contradict. Dart's
+    // http package sends this for every multipart file unless told otherwise, and rejecting
+    // it cost a completed survey in the field: the phone sent a good JPEG under the default,
+    // the 422 that followed parks a record permanently, and the app has no way back from
+    // that state. The bytes and the extension are still checked.
+    [Fact]
+    public void Accepts_a_jpeg_sent_without_a_declared_type()
+        => Assert.Equal(MediaContentPolicy.Jpeg,
+            MediaContentPolicy.Resolve("photo.jpg", "application/octet-stream", Jpeg(), "property"));
+
+    [Fact]
+    public void Accepts_a_jpeg_sent_with_no_type_at_all()
+        => Assert.Equal(MediaContentPolicy.Jpeg,
+            MediaContentPolicy.Resolve("photo.jpg", "", Jpeg(), "property"));
+
+    // The lenience is for silence, not for lying.
+    [Fact]
+    public void Still_rejects_a_specific_claim_that_is_wrong()
+    {
+        var ex = Assert.Throws<ApiException>(() =>
+            MediaContentPolicy.Resolve("photo.jpg", "image/png", Jpeg(), "property"));
+        Assert.Equal(ApiErrorCodes.MediaMismatch, ex.Code);
+    }
+
+    // And it does not loosen the slot rule by the back door.
+    [Fact]
+    public void Still_rejects_an_undeclared_pdf_in_a_camera_slot()
+    {
+        var ex = Assert.Throws<ApiException>(() =>
+            MediaContentPolicy.Resolve("note.pdf", "application/octet-stream", Pdf(), "property"));
+        Assert.Equal(ApiErrorCodes.MediaUnsupported, ex.Code);
+    }
+
     [Fact]
     public void Rejects_a_pdf_in_a_camera_slot()
     {
