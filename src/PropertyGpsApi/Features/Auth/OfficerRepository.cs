@@ -1,5 +1,6 @@
 using System.Data;
 using Dapper;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.Options;
@@ -131,7 +132,86 @@ internal sealed class OfficerRepository(
             }).ToList()
         };
 
+        // The procedure cannot give a correct ward id for a ward-scoped officer, so for
+        // those roles the jurisdictions are replaced with ones that carry it. Only when the
+        // lookup finds something: an officer whose mapping does not resolve keeps what the
+        // procedure returned rather than losing their ward entirely.
+        var corrected = await WardScopedJurisdictionsAsync(connection, officer.OfficerId, ct);
+        if (corrected.Count > 0)
+            officer = officer with { Jurisdictions = corrected };
+
         return new OtpValidationResult(OtpValidationOutcome.Valid, officer);
+    }
+
+    /// <summary>
+    /// The wards a ward-scoped officer (role 116 or 117) actually holds, with their real
+    /// ward ids.
+    ///
+    /// Needed because USP_S_Officer_ValidateOTP joins on the right ward - via
+    /// mst_Ofcr_WardMapping, falling back to the officer's own Ofcr_WardId - but its SELECT
+    /// list returns USR.Ofcr_wardid and never ARO.BBMPWardId. An officer mapped to two
+    /// wards therefore came back as two rows with two NAMES and one shared ID. The app
+    /// listed both and downloaded whichever the id pointed at, so choosing the second ward
+    /// silently fetched the first one's properties.
+    ///
+    /// Observed on officer 1036: "C.V. Ramannagar" and "Domlur", both carrying ward 57,
+    /// where the true ids are 57 and 112.
+    ///
+    /// This mirrors the procedure's own 116/117 branch exactly and adds the missing column.
+    /// The other role branches are left to the procedure rather than reimplemented here.
+    ///
+    /// FOR THE DBA: adding ARO.BBMPWardId to that SELECT would make this redundant and fix
+    /// it for every client, not just ours.
+    /// </summary>
+    private const string WardScopedJurisdictionsSql = """
+        SELECT DISTINCT
+            GbaZoneId       = aro.GBAZoneID,
+            GbaZoneName     = aro.GBAZoneName_En,
+            BbmpZoneId      = aro.BBMPZoneID,
+            BbmpZoneName    = aro.BBMPZoneName,
+            BbmpWardId      = aro.BBMPWardId,
+            BbmpWardName    = aro.BBMPWardName,
+            CorporationId   = aro.easthiULBNAME_CorpId,
+            CorporationName = aro.cityCorportationName
+        FROM dbo.mst_Officer o WITH (NOLOCK)
+        LEFT JOIN dbo.mst_Ofcr_WardMapping wm WITH (NOLOCK)
+               ON wm.Map_OfcrId = o.Ofcr_Id
+              AND wm.Map_OfcrRoleId = o.Ofcr_RoleId
+              AND ISNULL(wm.isActive, 1) = 1
+        JOIN dbo.mst_AROMapping aro WITH (NOLOCK)
+               ON aro.GBAZoneID = o.Ofcr_ZoneId
+              AND aro.easthiULBNAME_CorpId = o.Ofcr_CorporationId
+              AND aro.BBMPWardId = ISNULL(wm.Map_WardId, o.Ofcr_WardId)
+        WHERE o.Ofcr_Id = @officerId
+          AND ISNULL(o.Ofcr_Active, 0) = 1
+          AND o.Ofcr_RoleId IN (116, 117)
+        ORDER BY aro.BBMPWardName;
+        """;
+
+    /// <summary>
+    /// Empty for any role that is not ward-scoped, and for a ward-scoped officer whose
+    /// zone/ward does not resolve - in both cases the caller keeps what it already had
+    /// rather than replacing real jurisdictions with none.
+    /// </summary>
+    private async Task<List<Jurisdiction>> WardScopedJurisdictionsAsync(
+        SqlConnection connection, long officerId, CancellationToken ct)
+    {
+        var rows = (await connection.QueryAsync<OfficerLoadRow>(
+            new CommandDefinition(WardScopedJurisdictionsSql, new { officerId }, cancellationToken: ct)))
+            .AsList();
+
+        return rows.Select(r => new Jurisdiction
+        {
+            GbaZoneId = r.GbaZoneId,
+            GbaZoneName = r.GbaZoneName,
+            // The GBA id, never the BBMP one: every fetch is matched against MD_ZoneId.
+            ZoneId = r.GbaZoneId ?? r.BbmpZoneId,
+            ZoneName = r.BbmpZoneName ?? r.GbaZoneName,
+            WardId = r.BbmpWardId,
+            WardName = r.BbmpWardName,
+            CorporationId = r.CorporationId,
+            CorporationName = r.CorporationName
+        }).ToList();
     }
 
     /// <summary>
@@ -172,6 +252,12 @@ internal sealed class OfficerRepository(
         if (rows.Count == 0) return null;
         var first = rows[0];
 
+        // Same correction as the sign-in path, and for a second reason here: this query
+        // joins on o.Ofcr_WardId alone and never consults mst_Ofcr_WardMapping, so a
+        // two-ward officer saw both wards after signing in and only one after reopening
+        // the app. The two routes now answer the same thing.
+        var corrected = await WardScopedJurisdictionsAsync(connection, first.Ofcr_Id, ct);
+
         return new Officer
         {
             OfficerId = first.Ofcr_Id,
@@ -182,7 +268,7 @@ internal sealed class OfficerRepository(
             CorporationName = first.CorporationName,
             ZoneId = first.Ofcr_ZoneId,
             WardId = first.Ofcr_WardId,
-            Jurisdictions = rows
+            Jurisdictions = corrected.Count > 0 ? corrected : rows
                 .Where(r => r.BbmpWardId is not null)
                 .GroupBy(r => (r.GbaZoneId, r.BbmpWardId))
                 .Select(g => g.First())
