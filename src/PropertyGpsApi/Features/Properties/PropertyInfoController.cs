@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PropertyGpsApi.Common;
 using PropertyGpsApi.Features.Properties.Dtos;
+using PropertyGpsApi.Infrastructure.External;
 using PropertyGpsApi.Infrastructure.Security;
 using PropertyGpsApi.Infrastructure.Storage;
 
@@ -21,7 +22,8 @@ public sealed class PropertyInfoController(
     ISubmitMediaBinder mediaBinder,
     IMediaStore mediaStore,
     IMediaAccessReader mediaAccess,
-    IHistoryRepository history) : ControllerBase
+    IHistoryRepository history,
+    IBhoomiClient bhoomi) : ControllerBase
 {
     /// <summary>
     /// Step 3: the officer's ward worklist, which the app stores in SQLite for offline use.
@@ -108,6 +110,50 @@ public sealed class PropertyInfoController(
                 Message = outcome.Message?.Trim()
             },
             message: assign ? "Allotted to you." : "Released."));
+    }
+
+    /// <summary>
+    /// What the state's own land records say about the point the officer is standing on.
+    ///
+    /// Proxied rather than called from the app: these are long-lived service credentials,
+    /// and in an APK they are readable by anyone holding the file. The token is cached here
+    /// for its four-hour life, so a ward's worth of checks costs one token.
+    ///
+    /// Always 200 with a status in the envelope. A lookup that cannot be made is not an
+    /// error in the officer's work - it is one hint missing from one question - and turning
+    /// it into a failure would teach officers to ignore a red box.
+    /// </summary>
+    [HttpPost("bhoomi-check")]
+    [ProducesResponseType<ApiResponse<BhoomiCheckResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<BhoomiCheckResponse>>> BhoomiCheck(
+        [FromBody] BhoomiCheckRequest request, CancellationToken ct)
+    {
+        var lookup = await bhoomi.LookupAsync(request.Latitude, request.Longitude, ct);
+
+        return Ok(ApiResponse<BhoomiCheckResponse>.Ok(new BhoomiCheckResponse
+        {
+            Status = lookup.Outcome switch
+            {
+                BhoomiOutcome.Found => "FOUND",
+                BhoomiOutcome.NoLandRecord => "NO_LAND_RECORD",
+                BhoomiOutcome.OutsideMappedArea => "OUTSIDE_MAPPED_AREA",
+                BhoomiOutcome.InvalidCoordinates => "INVALID_COORDINATES",
+                _ => "UNAVAILABLE",
+            },
+            Message = lookup.Message,
+            AnyGovernmentParcel = lookup.AnyGovernmentParcel,
+            Parcels = lookup.Parcels.Select(p => new BhoomiParcelDto
+            {
+                District = p.District,
+                Taluk = p.Taluk,
+                Hobli = p.Hobli,
+                Village = p.Village,
+                SurveyNumber = p.SurveyNumber,
+                OwnerName = p.OwnerName,
+                OwnerType = p.OwnerType,
+                IsGovernment = p.IsGovernment,
+            }).ToList(),
+        }));
     }
 
     /// <summary>
