@@ -170,10 +170,10 @@ public sealed class PropertyInfoController(
         // written is evidence destroyed, and the device will have marked the record synced.
         try
         {
-            // Validation lives inside the try so a rejected answer and a rejected road
-            // return the same shape. Both are permanent for this payload and both are
-            // fixable by the officer.
-            Validate(request);
+            // Validation runs before any file is written, and inside the try so that a
+            // rejected answer and a rejected road return the same shape - both are
+            // permanent for this payload and both are fixable by the officer.
+            submissions.Validate(request);
 
             var mediaUrls = await mediaBinder.StoreAsync(request, Request.Form.Files, ct);
 
@@ -335,79 +335,4 @@ public sealed class PropertyInfoController(
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         NumberHandling = JsonNumberHandling.AllowReadingFromString
     };
-
-    private static void Validate(SubmitVerificationRequest request)
-    {
-        var errors = new List<ApiError>();
-
-        if (string.IsNullOrWhiteSpace(request.ApplicationId))
-            errors.Add(new ApiError { Field = "applicationId", Code = "REQUIRED", Message = "The application id is required." });
-
-        if (string.IsNullOrWhiteSpace(request.Epid))
-            errors.Add(new ApiError { Field = "epid", Code = "REQUIRED", Message = "The EPID is required." });
-
-        // The justification is the whole evidentiary value of asserting government land.
-        if (request.IsGovtProperty == 1 && string.IsNullOrWhiteSpace(request.GovtPropertyDetails))
-            errors.Add(new ApiError
-            {
-                Field = "govtPropertyDetails",
-                Code = "REQUIRED",
-                Message = "Please describe why this is government property."
-            });
-
-        // These land in bit/int NOT NULL columns on the legacy officer tables. Left
-        // unanswered they reach SQL as NULL and the insert fails - which surfaced as a 500,
-        // and the client treats 5xx as retryable, so a survey missing one answer would have
-        // been resent forever. Naming them here turns that into one clear rejection the
-        // officer can act on.
-        Require(errors, "propertyLandExists", request.PropertyLandExists);
-        Require(errors, "isAllBhoomiSurveyNosCorrect", request.IsAllBhoomiSurveyNosCorrect);
-        Require(errors, "siteDetails.isCornerPlot", request.SiteDetails.IsCornerPlot);
-
-        foreach (var (road, i) in request.SiteDetails.RoadDetails.Select((r, i) => (r, i)))
-        {
-            Require(errors, $"siteDetails.roadDetails[{i}].roadStatus", road.RoadStatus);
-            Require(errors, $"siteDetails.roadDetails[{i}].isPresentInPublicRoadList",
-                road.IsPresentInPublicRoadList);
-        }
-
-        if (request.SiteDetails.RoadDetails.Count == 0)
-            errors.Add(new ApiError { Field = "siteDetails.roadDetails", Code = "REQUIRED", Message = "At least one road is required." });
-
-        // 0,0 is in the Gulf of Guinea. It is what a device reports when it never got a
-        // fix, and it is the commonest real GPS failure - worth catching here rather than
-        // storing a survey that places a Bengaluru property in the Atlantic.
-        RejectNullIsland(errors, "siteDetails.correctedLat", request.SiteDetails.CorrectedLat, request.SiteDetails.CorrectedLng);
-        foreach (var (road, i) in request.SiteDetails.RoadDetails.Select((r, i) => (r, i)))
-        {
-            RejectNullIsland(errors, $"siteDetails.roadDetails[{i}].privateRoadLat", road.PrivateRoadLat, road.PrivateRoadLng);
-            RejectNullIsland(errors, $"siteDetails.roadDetails[{i}].nearPublicRoadLat", road.NearPublicRoadLat, road.NearPublicRoadLng);
-        }
-
-        if (errors.Count > 0)
-            throw new SubmitRejectedException(errors);
-    }
-
-    private static void Require(List<ApiError> errors, string field, int? value)
-    {
-        if (value is null)
-            errors.Add(new ApiError
-            {
-                Field = field,
-                Code = "REQUIRED",
-                Message = "This answer is needed before the survey can be submitted."
-            });
-    }
-
-    private static void RejectNullIsland(List<ApiError> errors, string field, double? lat, double? lng)
-    {
-        if (lat is null || lng is null) return;
-        if (Math.Abs(lat.Value) < 0.0001 && Math.Abs(lng.Value) < 0.0001)
-            errors.Add(new ApiError
-            {
-                Field = field,
-                Code = "NO_GPS_FIX",
-                Message = "The device recorded no GPS fix for this point. Please capture it again."
-            });
-    }
 }
