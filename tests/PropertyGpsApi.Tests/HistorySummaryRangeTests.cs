@@ -1,6 +1,9 @@
 using Microsoft.Extensions.Time.Testing;
 using PropertyGpsApi.Common;
-using PropertyGpsApi.Features.Properties;
+
+using PropertyGpsApi.Interfaces;
+
+using PropertyGpsApi.Services;
 
 namespace PropertyGpsApi.Tests;
 
@@ -20,8 +23,8 @@ public class HistorySummaryRangeTests
     private static readonly DateTimeOffset Sept2026 =
         new(2026, 9, 21, 10, 30, 0, TimeSpan.Zero);
 
-    private static IHistoryRepository At(DateTimeOffset now) =>
-        new HistoryRepository(new ThrowingConnections(), new FakeTimeProvider(now));
+    private static IHistoryService At(DateTimeOffset now) =>
+        new HistoryService(new ThrowingConnections(), new FakeTimeProvider(now));
 
     private static async Task<ApiException> Refused(int? year, int? month)
         => await Assert.ThrowsAsync<ApiException>(

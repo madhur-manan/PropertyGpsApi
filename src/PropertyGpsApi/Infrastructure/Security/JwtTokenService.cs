@@ -2,8 +2,8 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using PropertyGpsApi.Features.Auth;
 using PropertyGpsApi.Infrastructure.Options;
+using PropertyGpsApi.Models;
 
 namespace PropertyGpsApi.Infrastructure.Security;
 

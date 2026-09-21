@@ -12,10 +12,9 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using PropertyGpsApi;
 using PropertyGpsApi.Common;
-using PropertyGpsApi.Features.Auth;
-using PropertyGpsApi.Features.Masters;
-using PropertyGpsApi.Features.Properties;
-using PropertyGpsApi.Features.App;
+using PropertyGpsApi.Interfaces;
+using PropertyGpsApi.Services;
+using PropertyGpsApi.Models;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.Options;
 using PropertyGpsApi.Infrastructure.Security;
@@ -74,19 +73,19 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
-builder.Services.AddScoped<IOfficerRepository, OfficerRepository>();
+builder.Services.AddScoped<IOfficerService, OfficerService>();
 builder.Services.AddScoped<IOtpService, OtpService>();
-builder.Services.AddScoped<IApplicationRepository, ApplicationRepository>();
-builder.Services.AddScoped<IPropertyRepository, PropertyRepository>();
+builder.Services.AddScoped<IApplicationService, ApplicationService>();
+builder.Services.AddScoped<IPropertyService, PropertyService>();
 builder.Services.AddSingleton<IAssignmentReader, AssignmentReader>();
 builder.Services.AddSingleton<IOwnerReader, OwnerReader>();
-builder.Services.AddScoped<IMasterRepository, MasterRepository>();
-builder.Services.AddScoped<IPushStatusRepository, PushStatusRepository>();
-builder.Services.AddScoped<IVerificationSubmitRepository, VerificationSubmitRepository>();
-builder.Services.AddScoped<ISubmitMediaBinder, SubmitMediaBinder>();
-builder.Services.AddScoped<IMediaAccessReader, MediaAccessReader>();
-builder.Services.AddScoped<IHistoryRepository, HistoryRepository>();
-builder.Services.AddScoped<IAppVersionRepository, AppVersionRepository>();
+builder.Services.AddScoped<IMasterService, MasterService>();
+builder.Services.AddScoped<IPushStatusService, PushStatusService>();
+builder.Services.AddScoped<IVerificationSubmitService, VerificationSubmitService>();
+builder.Services.AddScoped<ISubmitMediaService, SubmitMediaService>();
+builder.Services.AddScoped<IMediaAccessService, MediaAccessService>();
+builder.Services.AddScoped<IHistoryService, HistoryService>();
+builder.Services.AddScoped<IAppVersionService, AppVersionService>();
 
 // The OTP sender seam. DevelopmentOtpSender writes the code to the log, which is the whole
 // point of it, and exactly why selecting it outside Development must fail the process

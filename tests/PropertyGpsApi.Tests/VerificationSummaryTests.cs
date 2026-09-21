@@ -1,4 +1,7 @@
-using PropertyGpsApi.Features.Properties;
+
+using PropertyGpsApi.Services;
+
+using PropertyGpsApi.Interfaces;
 
 namespace PropertyGpsApi.Tests;
 
@@ -26,21 +29,21 @@ public class VerificationSummaryTests
     /// </summary>
     [Fact]
     public void Pending_is_only_data_received_from_RI()
-        => Assert.Equal([13], HistoryRepository.PendingCodes);
+        => Assert.Equal([13], HistoryService.PendingCodes);
 
     [Fact]
     public void Approved_covers_every_stage_past_QC()
     {
         // 14 QC approved, 30 approved by RI, 150 JC approved,
         // 200 Commissioner approved, 300 payment done.
-        Assert.Equal([14, 30, 150, 200, 300], HistoryRepository.ApprovedCodes);
+        Assert.Equal([14, 30, 150, 200, 300], HistoryService.ApprovedCodes);
     }
 
     [Fact]
     public void Rejected_covers_every_rejection_and_nothing_else()
     {
         // 12 rejected QC, 25 rejected by RI, 110 JC rejected.
-        Assert.Equal([12, 25, 110], HistoryRepository.RejectedCodes);
+        Assert.Equal([12, 25, 110], HistoryService.RejectedCodes);
     }
 
     [Fact]
@@ -48,15 +51,15 @@ public class VerificationSummaryTests
     {
         // A returned survey is work to redo, which is different from being told
         // no — counting it as rejected would tell an officer they had failed.
-        Assert.Equal([400], HistoryRepository.ReturnedCodes);
+        Assert.Equal([400], HistoryService.ReturnedCodes);
     }
 
     private static int[] AllBucketedCodes() =>
     [
-        .. HistoryRepository.PendingCodes,
-        .. HistoryRepository.ApprovedCodes,
-        .. HistoryRepository.RejectedCodes,
-        .. HistoryRepository.ReturnedCodes,
+        .. HistoryService.PendingCodes,
+        .. HistoryService.ApprovedCodes,
+        .. HistoryService.RejectedCodes,
+        .. HistoryService.ReturnedCodes,
     ];
 
     [Fact]
@@ -87,7 +90,7 @@ public class VerificationSummaryTests
     [Fact]
     public void Total_counts_every_row_not_just_the_bucketed_ones()
     {
-        Assert.Contains("COUNT(*)", HistoryRepository.VerdictSums);
-        Assert.Contains("Total", HistoryRepository.VerdictSums);
+        Assert.Contains("COUNT(*)", HistoryService.VerdictSums);
+        Assert.Contains("Total", HistoryService.VerdictSums);
     }
 }

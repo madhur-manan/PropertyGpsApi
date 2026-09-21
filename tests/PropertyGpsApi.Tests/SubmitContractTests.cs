@@ -1,8 +1,11 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using PropertyGpsApi.Features.Properties;
-using PropertyGpsApi.Features.Properties.Dtos;
+using PropertyGpsApi.Models;
+
+using PropertyGpsApi.Services;
+
+using PropertyGpsApi.Interfaces;
 
 namespace PropertyGpsApi.Tests;
 
@@ -113,7 +116,7 @@ public class OfficerVerdictTests
     // rejected a khata. VerdictFor is `internal` and the test project already has
     // InternalsVisibleTo, so the compiler checks this now.
     private static (int StatusId, string? StatusValue) Verdict(string? recommendation) =>
-        VerificationSubmitRepository.VerdictFor(recommendation);
+        VerificationSubmitService.VerdictFor(recommendation);
 
     [Theory]
     [InlineData("Reject")]

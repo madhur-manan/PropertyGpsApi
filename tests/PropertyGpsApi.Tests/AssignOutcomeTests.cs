@@ -1,5 +1,9 @@
 using PropertyGpsApi.Common;
-using PropertyGpsApi.Features.Properties;
+using PropertyGpsApi.Models;
+
+using PropertyGpsApi.Services;
+
+using PropertyGpsApi.Interfaces;
 
 namespace PropertyGpsApi.Tests;
 
