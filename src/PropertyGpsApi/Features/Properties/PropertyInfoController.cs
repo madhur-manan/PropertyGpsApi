@@ -70,24 +70,9 @@ public sealed class PropertyInfoController(
 
         var outcome = await applications.AssignAsync(
             request.AppId, officerId, roleId, officerName, assign, ct);
-
         if (!outcome.Succeeded)
-        {
-            // The procedure rejects with a single 400 and an English sentence, so the code is
-            // recovered from the wording. Everything here is the officer's own situation to
-            // resolve - a record someone else took, or their own queue being full - so all of
-            // it is permanent for this request and recoverable once they act.
-            var message = outcome.Message?.Trim() ?? "The record could not be allotted.";
-            var code = message.Contains("Already Assigned", StringComparison.OrdinalIgnoreCase)
-                ? ApiErrorCodes.AlreadyAssigned
-                : message.Contains("pending in your queue", StringComparison.OrdinalIgnoreCase)
-                    ? ApiErrorCodes.QueueFull
-                    : message.Contains("maximum allowed limit", StringComparison.OrdinalIgnoreCase)
-                        ? ApiErrorCodes.ReassignLimitReached
-                        : ApiErrorCodes.AssignRejected;
-
-            throw ApiException.Unprocessable(message, code, recoverable: true);
-        }
+            throw ApiException.Unprocessable(
+                outcome.Text, outcome.RejectionCode, recoverable: true);
 
         return Ok(ApiResponse<AssignResponse>.Ok(
             new AssignResponse
