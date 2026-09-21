@@ -9,8 +9,16 @@ namespace PropertyGpsApi.Features.Properties;
 
 public interface IPropertyRepository
 {
+    /// <summary>
+    /// The ward worklist. Refuses outright if a ward officer asks for a ward
+    /// that is not theirs - see JurisdictionRules.RequireOwnWard.
+    /// </summary>
     Task<IReadOnlyList<PropertyDto>> FetchAsync(
-        FetchApplicationsRequest request, long officerId, CancellationToken ct);
+        FetchApplicationsRequest request,
+        long officerId,
+        int roleId,
+        long? officerWardId,
+        CancellationToken ct);
 }
 
 /// <summary>
@@ -32,8 +40,16 @@ internal sealed class PropertyRepository(
     private const int RowLimit = 500;
 
     public async Task<IReadOnlyList<PropertyDto>> FetchAsync(
-        FetchApplicationsRequest request, long officerId, CancellationToken ct)
+        FetchApplicationsRequest request,
+        long officerId,
+        int roleId,
+        long? officerWardId,
+        CancellationToken ct)
     {
+        JurisdictionRules.RequireOwnWard(
+            roleId, officerWardId, request.WardId,
+            "You can only view applications for your own ward.");
+
         var p = new DynamicParameters();
         p.Add("@AppID", RowLimit, DbType.Int32);
         p.Add("@Epid",

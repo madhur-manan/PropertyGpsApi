@@ -32,21 +32,10 @@ public sealed class PropertyInfoController(
         [FromBody] FetchApplicationsRequest request, CancellationToken ct)
     {
         var officerId = User.RequireLong(GpsClaims.UserId);
+        var ownWard = User.OptionalLong(GpsClaims.WardId);
         var roleId = (int)User.RequireLong(GpsClaims.RoleId);
-
-        // A ward-level officer (role 116) may only read their own ward. Without this the
-        // token authenticates but authorises nothing, and any officer could page through
-        // every ward in the city by changing three numbers in the body.
-        if (roleId == 116)
-        {
-            var ownWard = User.OptionalLong(GpsClaims.WardId);
-            if (ownWard is not null && ownWard != request.WardId)
-                throw ApiException.Forbidden(
-                    "You can only view applications for your own ward.",
-                    ApiErrorCodes.OutsideJurisdiction);
-        }
-
-        var results = await properties.FetchAsync(request, officerId, ct);
+        var results = await properties.FetchAsync(
+            request, officerId, roleId, ownWard, ct);
 
         return Ok(ApiResponse<IReadOnlyList<PropertyDto>>.Ok(
             results,
@@ -154,17 +143,6 @@ public sealed class PropertyInfoController(
 
         var request = ParsePayload(payload);
 
-        // A ward officer may only submit for their own ward, for the same reason fetch is
-        // scoped: the token says who you are, not what you may write to.
-        if (roleId == 116)
-        {
-            var ownWard = User.OptionalLong(GpsClaims.WardId);
-            if (ownWard is not null && ownWard != request.WardId)
-                throw ApiException.Forbidden(
-                    "You can only submit surveys for your own ward.",
-                    ApiErrorCodes.OutsideJurisdiction);
-        }
-
         // Files are stored before the transaction opens and are never rolled back. An
         // orphaned file costs disk; a committed row pointing at a photograph that was never
         // written is evidence destroyed, and the device will have marked the record synced.
@@ -173,7 +151,7 @@ public sealed class PropertyInfoController(
             // Validation runs before any file is written, and inside the try so that a
             // rejected answer and a rejected road return the same shape - both are
             // permanent for this payload and both are fixable by the officer.
-            submissions.Validate(request);
+            submissions.Validate(request, roleId, User.OptionalLong(GpsClaims.WardId));
 
             var mediaUrls = await mediaBinder.StoreAsync(request, Request.Form.Files, ct);
 
@@ -215,7 +193,12 @@ public sealed class PropertyInfoController(
         // same 404. Distinguishing them would turn this endpoint into an oracle for which
         // EPIDs exist, and the URLs are guessable - they carry only an EPID and a timestamp.
         var scope = await mediaAccess.ScopeForAsync(epid, ct);
-        if (scope is null || !MayView(roleId, scope)) return FileNotFound();
+        var mayView = scope is not null && JurisdictionRules.MayViewMedia(
+            roleId,
+            User.OptionalLong(GpsClaims.WardId),
+            User.OptionalLong(GpsClaims.ZoneId),
+            scope);
+        if (!mayView) return FileNotFound();
 
         var file = await mediaStore.OpenAsync(epid, fileName, ct);
         if (file is null) return FileNotFound();
@@ -229,14 +212,6 @@ public sealed class PropertyInfoController(
         return File(file.Content, file.ContentType, file.FileName);
     }
 
-    private bool MayView(int roleId, MediaScope scope) => roleId switch
-    {
-        // Ward officer: their own ward only.
-        116 => User.OptionalLong(GpsClaims.WardId) is not { } ward || ward == scope.WardId,
-        // Zone officer: anywhere in their zone. Role 125 legitimately has a null ward.
-        125 => User.OptionalLong(GpsClaims.ZoneId) is not { } zone || zone == scope.ZoneId,
-        _ => false
-    };
 
     private IActionResult FileNotFound() =>
         NotFound(new ApiResponse<object>

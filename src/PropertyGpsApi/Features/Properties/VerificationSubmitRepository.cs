@@ -20,7 +20,13 @@ public interface IVerificationSubmitRepository
     /// back. Throws SubmitRejectedException carrying one ApiError per problem,
     /// so the officer gets every fault at once rather than one per round trip.
     /// </summary>
-    void Validate(SubmitVerificationRequest request);
+    /// <summary>
+    /// Also enforces that a ward officer only submits for their own ward - the
+    /// same rule as fetch, because the token says who you are, not what you may
+    /// write to. Checked here rather than at the edge so both callers of the
+    /// rule share one implementation.
+    /// </summary>
+    void Validate(SubmitVerificationRequest request, int roleId, long? officerWardId);
 
     Task<SubmitVerificationResponse> SubmitAsync(
         SubmitVerificationRequest request,
@@ -437,8 +443,12 @@ internal sealed class VerificationSubmitRepository(
             isDeclaredRoadFacingSidesCorrect = r.SiteDetails.IsDeclaredRoadFacingSidesCorrect
         });
 
-    public void Validate(SubmitVerificationRequest request)
+    public void Validate(SubmitVerificationRequest request, int roleId, long? officerWardId)
     {
+        JurisdictionRules.RequireOwnWard(
+            roleId, officerWardId, request.WardId,
+            "You can only submit surveys for your own ward.");
+
         var errors = new List<ApiError>();
 
         if (string.IsNullOrWhiteSpace(request.ApplicationId))
