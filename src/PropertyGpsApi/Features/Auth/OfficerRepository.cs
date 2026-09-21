@@ -2,6 +2,8 @@ using System.Data;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
+using PropertyGpsApi.Common;
+using PropertyGpsApi.Features.Auth.Dtos;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.Options;
 
@@ -16,6 +18,14 @@ public interface IOfficerRepository
 
     /// <summary>Loads an officer without an OTP, for rehydrating a session from a token.</summary>
     Task<Officer?> LoadAsync(string mobile, CancellationToken ct);
+
+    /// <summary>
+    /// Who the bearer of a token is, and where they work — the `auth/me` answer.
+    ///
+    /// Returns the same shape as a sign-in but deliberately without a token; see
+    /// the implementation for why.
+    /// </summary>
+    Task<VerifyOtpResponse> ProfileAsync(string? mobile, CancellationToken ct);
 }
 
 public enum OtpValidationOutcome
@@ -326,5 +336,59 @@ internal sealed class OfficerRepository(
 
         await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
         await connection.ExecuteAsync(Sp.Call(procedures.Value.InsertLoginData, p, ct));
+    }
+
+    /// <summary>
+    /// The `auth/me` answer: who this token belongs to, and where they work.
+    ///
+    /// The app is offline-first and keeps its session across restarts, but a JWT
+    /// carries claims rather than names — it knows the ward id, not that the
+    /// ward is Hoodi. Without this an officer reopening the app would be asked
+    /// to sign in again despite holding a valid token, purely because the client
+    /// had forgotten the labels.
+    ///
+    /// Takes the mobile from the caller because only the controller can read a
+    /// claim; it is never a request parameter, so an officer can only ever ask
+    /// who they themselves are.
+    /// </summary>
+    public async Task<VerifyOtpResponse> ProfileAsync(string? mobile, CancellationToken ct)
+    {
+        // A token without the mobile claim is one we should not have accepted,
+        // so this is "sign in again", not a validation error.
+        if (string.IsNullOrWhiteSpace(mobile))
+            throw ApiException.Unauthorized("Your session is not valid. Please sign in again.");
+
+        var officer = await LoadAsync(mobile, ct)
+            ?? throw ApiException.Unauthorized(
+                "Your account is no longer active. Please sign in again.");
+
+        return new VerifyOtpResponse
+        {
+            // No token is minted here. This answers who the caller already is;
+            // issuing a fresh one would turn a lookup into a silent, unbounded
+            // session extension.
+            Token = "",
+            ExpiresAt = default,
+            UserId = officer.OfficerId,
+            RoleId = officer.RoleId,
+            Mobile = officer.Mobile,
+            UserName = officer.Name,
+            Designation = officer.RoleName,
+            CorporationId = officer.CorporationId,
+            CorporationName = officer.CorporationName,
+            ZoneId = officer.ZoneId,
+            WardId = officer.WardId,
+            Jurisdictions = officer.Jurisdictions.Select(j => new JurisdictionDto
+            {
+                GbaZoneId = j.GbaZoneId,
+                GbaZoneName = j.GbaZoneName,
+                ZoneId = j.ZoneId,
+                ZoneName = j.ZoneName,
+                WardId = j.WardId,
+                WardName = j.WardName,
+                CorporationId = j.CorporationId,
+                CorporationName = j.CorporationName
+            }).ToList()
+        };
     }
 }
