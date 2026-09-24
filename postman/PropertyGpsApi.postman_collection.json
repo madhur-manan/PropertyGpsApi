@@ -1,0 +1,179 @@
+{
+  "info": {
+    "name": "PropertyGpsApi (172.31.0.112)",
+    "description": "Single Plot GPS backend.\n\nSign in with Auth > 1. Send OTP, then Auth > 2. Verify OTP. The verify request saves the bearer token into the collection variable {{token}} automatically, so every other request just works afterwards.\n\nIn Development mode the OTP is written to the server log instead of being texted. Enable stdoutLogEnabled in web.config and read C:\\inetpub\\propertyGpsApi\\logs\\stdout_*.log on the server.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ] },
+  "variable": [
+    { "key": "baseUrl", "value": "http://172.31.0.112/propertygps" },
+    { "key": "api", "value": "v1/api/gbagps/singlesite" },
+    { "key": "token", "value": "" },
+    { "key": "mobile", "value": "" },
+    { "key": "otpRequestId", "value": "" },
+    { "key": "epid", "value": "" },
+    { "key": "zoneId", "value": "" },
+    { "key": "wardId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "1. Send OTP",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "const b = pm.response.json();",
+            "if (b.success && b.data && b.data.otpRequestId) {",
+            "  pm.collectionVariables.set('otpRequestId', b.data.otpRequestId);",
+            "  console.log('otpRequestId saved. Read the code from the server stdout log.');",
+            "} else { console.log('Send OTP failed: ' + JSON.stringify(b)); }"
+          ] } } ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"mobile\": \"{{mobile}}\",\n  \"deviceId\": \"PropertyGPS\"\n}" },
+            "url": { "raw": "{{baseUrl}}/{{api}}/auth/otp/send", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "auth", "otp", "send" ] },
+            "description": "Anonymous, rate limited. The mobile must be 10 digits starting 6-9. Set the collection variable mobile to an officer number that exists in mst_officer.\n\ndeviceId is paired across send and verify, so the two calls must agree. The app always sends PropertyGPS."
+          }
+        },
+        {
+          "name": "2. Verify OTP  (saves the token)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "const b = pm.response.json();",
+            "if (b.success && b.data && b.data.token) {",
+            "  pm.collectionVariables.set('token', b.data.token);",
+            "  console.log('Signed in. Token saved.');",
+            "} else { console.log('Verify failed: ' + JSON.stringify(b)); }"
+          ] } } ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"mobile\": \"{{mobile}}\",\n  \"otp\": \"\",\n  \"otpRequestId\": \"{{otpRequestId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/{{api}}/auth/otp/verify", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "auth", "otp", "verify" ] },
+            "description": "Anonymous, rate limited. Paste the code from the server log into otp. On success the token is saved to the collection variable automatically and every other request below will use it."
+          }
+        },
+        {
+          "name": "3. Who am I",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/{{api}}/auth/me", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "auth", "me" ] },
+            "description": "Derived from the token only, never from a parameter - an officer can only ever ask who they themselves are. The best first call to confirm the token works."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Masters",
+      "item": [
+        {
+          "name": "Zones",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/{{api}}/masters/zones", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "masters", "zones" ] } }
+        },
+        {
+          "name": "Wards",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/{{api}}/masters/wards?zoneId={{zoneId}}", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "masters", "wards" ], "query": [ { "key": "zoneId", "value": "{{zoneId}}" } ] } }
+        },
+        {
+          "name": "Streets",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/{{api}}/masters/streets?zoneId={{zoneId}}&wardId={{wardId}}", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "masters", "streets" ], "query": [ { "key": "zoneId", "value": "{{zoneId}}" }, { "key": "wardId", "value": "{{wardId}}" } ] },
+            "description": "The KSRSAC road list for the ward. A road submitted that is not in this list is now stored anyway and reported as unverified, rather than rejected."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Property",
+      "item": [
+        {
+          "name": "Fetch (baseline for the ward)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": { "raw": "{{baseUrl}}/{{api}}/propertyinfo/fetch", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "propertyinfo", "fetch" ] },
+            "description": "CAREFUL. The ward comes from the token, not the body. This delivers only applications with IsPushedToGps = 0 and flips them to 1, so the SAME ward returns nothing on a second call. That is deliberate once-only delivery, not a bug - but it means calling this from Postman consumes the ward that the device was going to receive."
+          }
+        },
+        {
+          "name": "Assign",
+          "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "body": { "mode": "raw", "raw": "{\n  \"epid\": \"{{epid}}\"\n}" }, "url": { "raw": "{{baseUrl}}/{{api}}/propertyinfo/assign", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "propertyinfo", "assign" ] } }
+        },
+        {
+          "name": "Unassign",
+          "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" } ], "body": { "mode": "raw", "raw": "{\n  \"epid\": \"{{epid}}\"\n}" }, "url": { "raw": "{{baseUrl}}/{{api}}/propertyinfo/unassign", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "propertyinfo", "unassign" ] } }
+        },
+        {
+          "name": "Push status (device acknowledgement)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"items\": [\n    {\n      \"applicationId\": 0,\n      \"accepted\": true,\n      \"remark\": \"Stored on device via Postman\"\n    }\n  ]\n}" },
+            "url": { "raw": "{{baseUrl}}/{{api}}/propertyinfo/push-status", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "propertyinfo", "push-status" ] },
+            "description": "What the device sends back after storing a fetched ward. Writes an audit row to GPS_Push_RequestResponse_Tran.\n\nNote: the stored procedure returns NO result set at all for a status code that is neither 200 nor 500."
+          }
+        },
+        {
+          "name": "Add new (SUBMIT SURVEY - multipart)",
+          "request": {
+            "method": "POST",
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "payload", "value": "{\n  \"epid\": \"{{epid}}\"\n}", "type": "text", "description": "The whole survey as JSON, in ONE part named exactly payload." },
+              { "key": "files", "type": "file", "src": [], "description": "Zero or more parts, all named files. A survey field naming a file by its basename is what binds that file to its slot." }
+            ] },
+            "url": { "raw": "{{baseUrl}}/{{api}}/propertyinfo/add-new", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "propertyinfo", "add-new" ] },
+            "description": "80 MB limit. Do NOT set Content-Type by hand - Postman writes the multipart boundary itself, and overriding it breaks the parse.\n\nThis one WRITES: it moves the application to status 13 and stores photos under Media__RootPath. Use a test EPID."
+          }
+        },
+        {
+          "name": "File view",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/{{api}}/propertyinfo/file/view/{{epid}}/FILENAME.jpg", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "propertyinfo", "file", "view", "{{epid}}", "FILENAME.jpg" ] },
+            "description": "Documents are served through the application, never as static files - the authorisation on this route is the only thing guarding them."
+          }
+        },
+        {
+          "name": "History",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/{{api}}/propertyinfo/history", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "propertyinfo", "history" ] } }
+        },
+        {
+          "name": "History summary",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/{{api}}/propertyinfo/history/summary", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "propertyinfo", "history", "summary" ] } }
+        }
+      ]
+    },
+    {
+      "name": "App",
+      "item": [
+        {
+          "name": "Version check",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"versionName\": \"1.0.0\",\n  \"platform\": \"android\"\n}" },
+            "url": { "raw": "{{baseUrl}}/{{api}}/app/version-check", "host": [ "{{baseUrl}}" ], "path": [ "{{api}}", "app", "version-check" ] },
+            "description": "Requires a token: the Authorize attribute sits on the controller, so this is not reachable before sign-in."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "live",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": { "raw": "{{baseUrl}}/health/live", "host": [ "{{baseUrl}}" ], "path": [ "health", "live" ] }, "description": "The process is up. No database involved." }
+        },
+        {
+          "name": "ready",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": { "raw": "{{baseUrl}}/health/ready", "host": [ "{{baseUrl}}" ], "path": [ "health", "ready" ] }, "description": "Opens a SQL Server connection. A 503 here means the database, not the app." }
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using PropertyGpsApi.Common;
 using PropertyGpsApi.Models;
 
 using PropertyGpsApi.Services;
@@ -91,12 +92,44 @@ public class SubmitContractTests
     public void Every_property_declares_its_wire_name(Type dto)
     {
         var missing = dto.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            // A property that never reaches the wire has no wire name to pin. Exempting
+            // [JsonIgnore] keeps this rule about the contract rather than about every
+            // public member - SubmitVerificationResponse.Warnings is carried to the
+            // controller in process and re-emitted in the envelope's `errors`, so naming
+            // it here would only suggest it appears in `data`, which it does not.
+            .Where(p => p.GetCustomAttribute<JsonIgnoreAttribute>() is null)
             .Where(p => p.GetCustomAttribute<JsonPropertyNameAttribute>() is null)
             .Select(p => p.Name)
             .ToList();
 
         Assert.True(missing.Count == 0,
             $"{dto.Name} is missing [JsonPropertyName] on: {string.Join(", ", missing)}");
+    }
+
+    /// <summary>
+    /// The warning list must not be serialised into `data`.
+    /// </summary>
+    /// <remarks>
+    /// It is emitted in the envelope's `errors` array instead. Serialising it here as well
+    /// would put the same sentences on the wire twice, in two shapes, and invite the app to
+    /// read whichever it found first.
+    /// </remarks>
+    [Fact]
+    public void Road_warnings_do_not_appear_in_the_data_payload()
+    {
+        var json = JsonSerializer.Serialize(new SubmitVerificationResponse
+        {
+            ApplicationId = "202608240103427",
+            Epid = "4490308590",
+            AppStatus = 13,
+            RoadsStored = 1,
+            RoadsUnverified = 1,
+            Warnings = [new ApiError { Field = "siteDetails.roadDetails[roadId=999]", Message = "x" }]
+        }, Json);
+
+        Assert.Contains("\"roadsUnverified\":1", json);
+        Assert.DoesNotContain("warnings", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("roadId=999", json);
     }
 }
 

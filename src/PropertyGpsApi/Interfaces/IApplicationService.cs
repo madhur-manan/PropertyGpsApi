@@ -10,6 +10,5 @@ namespace PropertyGpsApi.Interfaces;
 
 public interface IApplicationService
 {
-    Task<AssignOutcome> AssignAsync(
-        int appId, long officerId, int roleId, string? officerName, bool assign, CancellationToken ct);
+    Task<AssignOutcome> AssignAsync(int appId, long officerId, int roleId, string? officerName, bool assign, CancellationToken ct);
 }

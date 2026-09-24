@@ -10,6 +10,5 @@ namespace PropertyGpsApi.Interfaces;
 
 public interface IPushStatusService
 {
-    Task<PushStatusResponse> RecordAsync(
-        PushStatusRequest request, long officerId, int roleId, CancellationToken ct);
+    Task<PushStatusResponse> RecordAsync(PushStatusRequest request, long officerId, int roleId, CancellationToken ct);
 }

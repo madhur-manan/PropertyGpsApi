@@ -16,8 +16,7 @@ public interface IHistoryService
     /// <paramref name="start"/> and <paramref name="range"/> are clamped here
     /// rather than at the edge, so every caller gets the same bounds.
     /// </summary>
-    Task<HistoryPage> PageForOfficerAsync(
-        long officerId, int start, int range, CancellationToken ct);
+    Task<HistoryPage> PageForOfficerAsync(long officerId, int start, int range, CancellationToken ct);
 
     /// <summary>
     /// One month of this officer's work. A null year or month means the current
@@ -25,6 +24,5 @@ public interface IHistoryService
     /// with a wrong date would otherwise ask for the wrong month and get a
     /// confidently empty answer.
     /// </summary>
-    Task<VerificationSummaryDto> SummaryForOfficerAsync(
-        long officerId, int? year, int? month, CancellationToken ct);
+    Task<VerificationSummaryDto> SummaryForOfficerAsync(long officerId, int? year, int? month, CancellationToken ct);
 }

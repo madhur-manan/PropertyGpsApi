@@ -25,7 +25,8 @@ public sealed class PropertyInfoController(
     ISubmitMediaService mediaBinder,
     IMediaStore mediaStore,
     IMediaAccessService mediaAccess,
-    IHistoryService history) : ControllerBase
+    IHistoryService history,
+    ILogger<PropertyInfoController> logger) : ControllerBase
 {
     /// <summary>
     /// Step 3: the officer's ward worklist, which the app stores in SQLite for offline use.
@@ -147,11 +148,32 @@ public sealed class PropertyInfoController(
             var result = await submissions.SubmitAsync(
                 request, mediaUrls, officerId, roleId, mobile, ct);
 
-            return Ok(ApiResponse<SubmitVerificationResponse>.Ok(
-                result, message: "Survey received."));
+            // A road the master does not recognise is a warning, not a refusal: the survey
+            // is stored and success is true. The detail still travels in `errors`, because
+            // that is where the envelope carries per-field reasons and QC needs to know
+            // which road was taken on the officer's word.
+            return Ok(new ApiResponse<SubmitVerificationResponse>
+            {
+                Success = true,
+                Code = ApiErrorCodes.Ok,
+                Message = result.RoadsUnverified == 0
+                    ? "Survey received."
+                    : $"Survey received. {result.RoadsUnverified} road(s) were not in the "
+                      + "KSRSAC master and were stored as entered.",
+                Data = result,
+                Errors = result.Warnings,
+                TraceId = HttpContext.TraceIdentifier
+            });
         }
         catch (SubmitRejectedException rejected)
         {
+            // Logged because nothing else records it: a refused survey used to leave no
+            // line at all, so "why didn't this one go through?" had no answer on the server.
+            logger.LogWarning(
+                "Survey refused for {ApplicationId} (EPID {Epid}) from officer {OfficerId}: {Code} - {Reasons}",
+                request.ApplicationId, request.Epid, officerId, rejected.Code,
+                string.Join("; ", rejected.Errors.Select(e => $"{e.Field}: {e.Code} {e.Message}")));
+
             // Nothing was written. The files are still on the server, so this is permanent
             // for this payload but recoverable once the road details are corrected.
             return UnprocessableEntity(new ApiResponse<SubmitVerificationResponse>

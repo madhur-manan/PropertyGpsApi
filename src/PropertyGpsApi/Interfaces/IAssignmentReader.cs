@@ -6,6 +6,5 @@ namespace PropertyGpsApi.Interfaces;
 
 internal interface IAssignmentReader
 {
-    Task<IReadOnlyDictionary<int, AssignmentRow>> ActiveForAsync(
-        SqlConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct);
+    Task<IReadOnlyDictionary<int, AssignmentRow>> ActiveForAsync( SqlConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct);
 }

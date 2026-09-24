@@ -66,9 +66,12 @@ internal sealed class VerificationSubmitService(
                     ApiErrorCodes.ApplicationNotFound, recoverable: true);
 
             await WriteApplicationAsync(connection, transaction, sp, request, site, mediaUrls, officerId, roleId, ct);
-            var roadsStored = await WriteRoadsAsync(connection, transaction, sp, request, site, mediaUrls, officerId, roleId, ct);
+            var (roadsStored, unverifiedRoads) = await WriteRoadsAsync(
+                connection, transaction, sp, request, site, mediaUrls, officerId, roleId, ct);
             await WriteExtrasAsync(connection, transaction, request, mediaUrls, ct);
             await WriteStatusAsync(connection, transaction, sp, request, appId.Value, officerId, roleId, officerMobile, ct);
+            var assignmentClosed = await CompleteAssignmentAsync(
+                connection, transaction, appId.Value, officerId, roleId, ct);
 
             // Read the status back rather than reporting a constant. The procedure decides
             // it from the role, so a copy here could drift from what was actually written
@@ -80,8 +83,10 @@ internal sealed class VerificationSubmitService(
             await transaction.CommitAsync(ct);
 
             logger.LogInformation(
-                "Verification stored for {ApplicationId} by officer {OfficerId}: {Roads} road(s), {Media} file(s)",
-                request.ApplicationId, officerId, roadsStored, mediaUrls.Count);
+                "Verification stored for {ApplicationId} by officer {OfficerId}: {Roads} road(s) "
+                + "({Unverified} unrecognised), {Media} file(s), assignment {Assignment}",
+                request.ApplicationId, officerId, roadsStored, unverifiedRoads.Count, mediaUrls.Count,
+                assignmentClosed ? "completed" : "not held by this officer");
 
             return new SubmitVerificationResponse
             {
@@ -89,8 +94,10 @@ internal sealed class VerificationSubmitService(
                 Epid = request.Epid,
                 AppStatus = appStatus ?? 0,
                 RoadsStored = roadsStored,
+                RoadsUnverified = unverifiedRoads.Count,
                 MediaStored = mediaUrls.Count,
-                StoredUtc = DateTimeOffset.UtcNow
+                StoredUtc = DateTimeOffset.UtcNow,
+                Warnings = unverifiedRoads
             };
         }
         catch
@@ -98,6 +105,35 @@ internal sealed class VerificationSubmitService(
             await SafeRollbackAsync(transaction);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Closes the submitting officer's own assignment for this application.
+    ///
+    /// Nothing on the submit path did this, so the assignment stayed Pending forever and
+    /// USP_IU_Architect_AssignedApp - which refuses a third pending assignment - blocked
+    /// every officer after their second survey. Inside the transaction on purpose: a survey
+    /// that rolls back must leave the officer still holding the application.
+    ///
+    /// Our own procedure (db/19_udd_GpsCompleteAssignment.sql), mirroring the update the
+    /// legacy workflow performs, because USP_IU_Architect_AssignedApp can only unassign.
+    /// Returns false when this officer held no pending assignment - a legitimate case (a
+    /// survey completed by someone other than the holder), so it is logged, not an error.
+    /// </summary>
+    private static async Task<bool> CompleteAssignmentAsync(
+        SqlConnection connection, SqlTransaction transaction, int appId, long officerId, int roleId,
+        CancellationToken ct)
+    {
+        var p = new DynamicParameters();
+        p.Add("@AppId", appId, DbType.Int32);
+        p.Add("@OfficerId", officerId, DbType.Int64);
+        p.Add("@RoleId", roleId, DbType.Int32);
+
+        var rows = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
+            "dbo.USP_U_BtoA_GpsCompleteAssignment", p, transaction, 30,
+            CommandType.StoredProcedure, cancellationToken: ct));
+
+        return rows > 0;
     }
 
     // App_Status after a submit is 13, "Data Received from RI", and the status procedure
@@ -190,7 +226,21 @@ internal sealed class VerificationSubmitService(
                 ApiErrorCodes.SubmitRejected, recoverable: true);
     }
 
-    private static async Task<int> WriteRoadsAsync(
+    /// <summary>
+    /// Writes each road, and reports which of them the KSRSAC master did not recognise.
+    /// </summary>
+    /// <remarks>
+    /// An unrecognised road used to abort the whole submit. Because every write shares one
+    /// transaction, that discarded the application row, the roads that did match and the
+    /// move to status 13 - and it made one legitimate answer impossible to send at all:
+    /// "not in the list" travels as road id 999, which exists once in the master, in an
+    /// unrelated ward. No answer the officer could give would save.
+    ///
+    /// The road is now stored either way and an unrecognised one is a warning. A genuine
+    /// write failure (Status = 0, meaning the row is NOT in the database) still aborts,
+    /// because reporting success for a road nobody stored would be a lie.
+    /// </remarks>
+    private async Task<(int Stored, List<ApiError> Unverified)> WriteRoadsAsync(
         SqlConnection connection, SqlTransaction transaction, StoredProcedureOptions sp,
         SubmitVerificationRequest request, SubmitSiteDetails site,
         IReadOnlyDictionary<string, string> mediaUrls,
@@ -198,6 +248,7 @@ internal sealed class VerificationSubmitService(
     {
         var stored = 0;
         var rejected = new List<ApiError>();
+        var unverified = new List<ApiError>();
 
         // Ordered so two concurrent submissions touch rows in the same sequence. With the
         // application lock held this is belt and braces, but it costs nothing.
@@ -234,19 +285,28 @@ internal sealed class VerificationSubmitService(
             var row = await connection.QueryFirstOrDefaultAsync<RoadWriteRow>(new CommandDefinition(
                 sp.SubmitRoad, p, transaction, 60, CommandType.StoredProcedure, cancellationToken: ct));
 
-            // A road the KSRSAC master does not recognise comes back as Status = 0 with a
-            // message, not as an exception. Treating that as success would store a property
-            // whose road count quietly disagrees with the survey.
+            // The row was not written. Reporting the survey as stored would be untrue, and
+            // the officer would never be asked for it again.
             if (row is null || !row.Status)
             {
-                rejected.Add(new ApiError
-                {
-                    Field = $"siteDetails.roadDetails[{stored + rejected.Count}]",
-                    Code = ApiErrorCodes.RoadNotRecognised,
-                    Message = row?.Message?.Trim()
-                        ?? $"Road '{road.RoadName}' was not accepted and no reason was given."
-                });
+                rejected.Add(RoadError(road,
+                    row?.Message?.Trim()
+                        ?? $"Road '{road.RoadName}' was not accepted and no reason was given."));
                 continue;
+            }
+
+            // Stored, but the master does not know this road. Named individually rather
+            // than counted: this is the only place it is visible until QC opens the record.
+            if (!row.KsracMatched)
+            {
+                unverified.Add(RoadError(road,
+                    $"Road '{road.RoadName}' is not in the KSRSAC master for this ward. "
+                    + "It has been stored as the officer entered it."));
+
+                logger.LogWarning(
+                    "Road not recognised on {ApplicationId} from officer {OfficerId}: "
+                    + "id {RoadId}, name {RoadName}. Stored unverified.",
+                    request.ApplicationId, officerId, road.RoadId, road.RoadName);
             }
 
             if (row.RoadRowId > 0 && !string.IsNullOrWhiteSpace(road.NoticeImage))
@@ -260,10 +320,26 @@ internal sealed class VerificationSubmitService(
             throw new SubmitRejectedException(
                 rejected,
                 ApiErrorCodes.RoadNotRecognised,
-                "Some road details were not accepted. Nothing was saved.");
+                "Some road details could not be saved. Nothing was saved.");
 
-        return stored;
+        return (stored, unverified);
     }
+
+    /// <summary>
+    /// Names the road by id and name rather than by its index in the request.
+    /// </summary>
+    /// <remarks>
+    /// The index used to be <c>stored + rejected.Count</c>, but the loop iterates
+    /// <c>OrderBy(RoadRowId)</c> rather than payload order, so that number pointed at
+    /// whichever road happened to sort there - the app could not map the error back to the
+    /// row the officer filled in. Identity beats a confident wrong subscript.
+    /// </remarks>
+    private static ApiError RoadError(SubmitRoadDetail road, string message) => new()
+    {
+        Field = $"siteDetails.roadDetails[roadId={road.RoadId}]",
+        Code = ApiErrorCodes.RoadNotRecognised,
+        Message = message
+    };
 
     private static async Task WriteRoadNoticeAsync(
         SqlConnection connection, SqlTransaction transaction, int roadRowId, string? noticeUrl,
@@ -448,23 +524,42 @@ internal sealed class VerificationSubmitService(
         // officer can act on.
         Require(errors, "propertyLandExists", request.PropertyLandExists);
         Require(errors, "isAllBhoomiSurveyNosCorrect", request.IsAllBhoomiSurveyNosCorrect);
-        Require(errors, "siteDetails.isCornerPlot", request.SiteDetails.IsCornerPlot);
 
-        foreach (var (road, i) in request.SiteDetails.RoadDetails.Select((r, i) => (r, i)))
+        // "siteDetails": null or "roadDetails": null in the JSON used to throw a
+        // NullReferenceException below - a 500, which the device treats as retryable, so
+        // the same broken survey was resent on every sync forever.
+        var site = request.SiteDetails;
+        if (site is null)
+        {
+            errors.Add(new ApiError
+            {
+                Field = "siteDetails",
+                Code = "REQUIRED",
+                Message = "The site and road answers are missing from this survey."
+            });
+            throw new SubmitRejectedException(errors);
+        }
+        var roads = site.RoadDetails ?? [];
+
+        Require(errors, "siteDetails.isCornerPlot", site.IsCornerPlot);
+
+        foreach (var (road, i) in roads.Select((r, i) => (r, i)))
         {
             Require(errors, $"siteDetails.roadDetails[{i}].roadStatus", road.RoadStatus);
             Require(errors, $"siteDetails.roadDetails[{i}].isPresentInPublicRoadList",
                 road.IsPresentInPublicRoadList);
         }
 
-        if (request.SiteDetails.RoadDetails.Count == 0)
+        if (roads.Count == 0)
             errors.Add(new ApiError { Field = "siteDetails.roadDetails", Code = "REQUIRED", Message = "At least one road is required." });
+        else
+            ValidateRoadSet(errors, site, roads);
 
         // 0,0 is in the Gulf of Guinea. It is what a device reports when it never got a
         // fix, and it is the commonest real GPS failure - worth catching here rather than
         // storing a survey that places a Bengaluru property in the Atlantic.
-        RejectNullIsland(errors, "siteDetails.correctedLat", request.SiteDetails.CorrectedLat, request.SiteDetails.CorrectedLng);
-        foreach (var (road, i) in request.SiteDetails.RoadDetails.Select((r, i) => (r, i)))
+        RejectNullIsland(errors, "siteDetails.correctedLat", site.CorrectedLat, site.CorrectedLng);
+        foreach (var (road, i) in roads.Select((r, i) => (r, i)))
         {
             RejectNullIsland(errors, $"siteDetails.roadDetails[{i}].privateRoadLat", road.PrivateRoadLat, road.PrivateRoadLng);
             RejectNullIsland(errors, $"siteDetails.roadDetails[{i}].nearPublicRoadLat", road.NearPublicRoadLat, road.NearPublicRoadLng);
@@ -473,6 +568,134 @@ internal sealed class VerificationSubmitService(
         if (errors.Count > 0)
             throw new SubmitRejectedException(errors);
     }
+
+    /// <summary>The most roads a plot can face; the app enforces the same figure.</summary>
+    internal const int MaxRoads = 5;
+
+    private const int RoadDeleted = 2;
+    private const string NotInListRoadId = "999";
+
+    /// <summary>
+    /// The roads as a set: how many, whether that agrees with the corner-plot answer, and
+    /// whether any road appears twice.
+    ///
+    /// These used to be accepted. A field survey - not a corner plot, one declared road,
+    /// two submitted - would have been stored with 200 and an extra road row. Unlike an
+    /// unrecognised KSRSAC road (a warning: the officer reporting reality), these are
+    /// surveys that contradict themselves, so they are refused and the officer corrects
+    /// them on the device. The app applies the same rules before sending; this is the
+    /// backstop for older installs.
+    /// </summary>
+    private static void ValidateRoadSet(
+        List<ApiError> errors, SubmitSiteDetails site, IReadOnlyList<SubmitRoadDetail> roads)
+    {
+        foreach (var (road, i) in roads.Select((r, i) => (r, i)))
+        {
+            // [Range(0, 3)] on the model never runs: the payload is deserialised by hand.
+            if (road.RoadStatus is { } status and (< 0 or > 3))
+                errors.Add(new ApiError
+                {
+                    Field = $"siteDetails.roadDetails[{i}].roadStatus",
+                    Code = "INVALID",
+                    Message = $"Road {i + 1} has an unknown status ({status})."
+                });
+        }
+
+        // A road the officer marked "not found" is being deleted; it is not a side.
+        var live = roads.Select((r, i) => (Road: r, Index: i))
+                        .Where(x => x.Road.RoadStatus != RoadDeleted)
+                        .ToList();
+
+        if (live.Count == 0)
+        {
+            errors.Add(new ApiError
+            {
+                Field = "siteDetails.roadDetails",
+                Code = "REQUIRED",
+                Message = "Every road was marked not found. Record the road the plot actually faces."
+            });
+            return;
+        }
+
+        if (live.Count > MaxRoads)
+            errors.Add(new ApiError
+            {
+                Field = "siteDetails.roadDetails",
+                Code = "TOO_MANY_ROADS",
+                Message = $"A plot can face at most {MaxRoads} roads, but {live.Count} were submitted."
+            });
+
+        // The count the officer asserted - the declared one if they agreed with it, their
+        // own if they corrected it. The app always sends it.
+        if (site.RoadFacingSides is { } sides && live.Count != sides)
+            errors.Add(new ApiError
+            {
+                Field = "siteDetails.roadDetails",
+                Code = "ROAD_COUNT_MISMATCH",
+                Message = $"The plot faces {sides} {Roads(sides)}, but {live.Count} " +
+                          $"{(live.Count == 1 ? "was" : "were")} submitted. " +
+                          "Remove the extra road or correct the number of roads."
+            });
+
+        var asserted = site.RoadFacingSides ?? live.Count;
+        if (site.IsCornerPlot == 0 && asserted != 1)
+            errors.Add(new ApiError
+            {
+                Field = "siteDetails.isCornerPlot",
+                Code = "CORNER_PLOT_MISMATCH",
+                Message = $"A plot that is not a corner plot faces one road, but {asserted} were given."
+            });
+        if (site.IsCornerPlot == 1 && asserted < 2)
+            errors.Add(new ApiError
+            {
+                Field = "siteDetails.isCornerPlot",
+                Code = "CORNER_PLOT_MISMATCH",
+                Message = "A corner plot faces at least two roads, but only one was given."
+            });
+
+        // Two entries for one road row. The road procedure matches on the row id and
+        // would silently overwrite the first with the second.
+        foreach (var group in live.Where(x => x.Road.RoadRowId is not null)
+                                  .GroupBy(x => x.Road.RoadRowId)
+                                  .Where(g => g.Count() > 1))
+        {
+            var second = group.Skip(1).First();
+            errors.Add(new ApiError
+            {
+                Field = $"siteDetails.roadDetails[{second.Index}].roadRowId",
+                Code = "DUPLICATE_ROAD",
+                Message = $"Roads {string.Join(" and ", group.Select(x => x.Index + 1))} " +
+                          "are the same declared road."
+            });
+        }
+
+        // The same public road named twice. A pair of roads confirmed unchanged is never
+        // reported: on a corner plot the fetch copies one site-level road onto every
+        // declared entry, so they share an id by construction. At least one of the pair
+        // must have been chosen by the officer (updated or added). 999 is the shared
+        // "not in the list" sentinel and identifies nothing.
+        foreach (var group in live.Where(x => x.Road.IsPresentInPublicRoadList == 1
+                                              && !string.IsNullOrWhiteSpace(x.Road.RoadId)
+                                              && x.Road.RoadId!.Trim() != NotInListRoadId)
+                                  .GroupBy(x => x.Road.RoadId!.Trim())
+                                  .Where(g => g.Count() > 1
+                                              && g.Any(x => x.Road.RoadStatus is 1 or 3)))
+        {
+            var second = group.Skip(1).First();
+            var name = group.Select(x => x.Road.ActualRoadName ?? x.Road.RoadName)
+                            .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+            errors.Add(new ApiError
+            {
+                Field = $"siteDetails.roadDetails[{second.Index}].roadId",
+                Code = "DUPLICATE_ROAD",
+                Message = $"Roads {string.Join(" and ", group.Select(x => x.Index + 1))} are " +
+                          $"the same road{(name is null ? "" : $" ({name})")}. " +
+                          "Each road facing the plot should appear once."
+            });
+        }
+    }
+
+    private static string Roads(int n) => n == 1 ? "road" : "roads";
 
     private static void Require(List<ApiError> errors, string field, int? value)
     {

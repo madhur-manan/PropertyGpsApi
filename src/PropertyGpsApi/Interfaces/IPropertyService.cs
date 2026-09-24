@@ -13,10 +13,5 @@ public interface IPropertyService
     /// The ward worklist. Refuses outright if a ward officer asks for a ward
     /// that is not theirs - see JurisdictionRules.RequireOwnWard.
     /// </summary>
-    Task<IReadOnlyList<PropertyDto>> FetchAsync(
-        FetchApplicationsRequest request,
-        long officerId,
-        int roleId,
-        long? officerWardId,
-        CancellationToken ct);
+    Task<IReadOnlyList<PropertyDto>> FetchAsync( FetchApplicationsRequest request,long officerId,int roleId,long? officerWardId,CancellationToken ct);
 }

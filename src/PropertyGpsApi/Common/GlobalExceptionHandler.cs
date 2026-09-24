@@ -12,7 +12,10 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
         switch (exception)
         {
             case ApiException api:
-                logger.LogWarning("Handled API failure {Code} on {Path}", api.Code, http.Request.Path);
+                // The message and trace id are what make this line useful: the code alone
+                // said *that* a MEDIA_MISSING happened, never which file, on which request.
+                logger.LogWarning("Handled API failure {Code} on {Path} (trace {TraceId}): {Message}",
+                    api.Code, http.Request.Path, http.TraceIdentifier, api.Message);
                 await ErrorEnvelopeWriter.WriteAsync(
                     http, api.StatusCode, api.Code, api.Message, api.Retryable, api.Recoverable);
                 return true;

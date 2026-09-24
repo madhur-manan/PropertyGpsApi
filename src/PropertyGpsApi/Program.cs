@@ -305,15 +305,15 @@ app.UseForwardedHeaders();
 // enters endpoint routing, so neither the fallback authorization policy nor the
 // MapFallback catch-all applies - otherwise /swagger would answer with our "endpoint does
 // not exist" envelope instead of the UI.
-if (app.Environment.IsDevelopment())
-{
+//if (app.Environment.IsDevelopment())
+//{
     app.UseSwaggerUI(ui =>
     {
         ui.SwaggerEndpoint("/openapi/v1.json", "PropertyGpsApi v1");
         ui.RoutePrefix = "swagger";
         ui.DocumentTitle = "PropertyGpsApi";
     });
-}
+//}
 
 app.UseRouting();
 app.UseRateLimiter();

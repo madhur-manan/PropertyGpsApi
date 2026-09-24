@@ -10,12 +10,7 @@ using PropertyGpsApi.Interfaces;
 namespace PropertyGpsApi.Services;
 
 
-internal sealed class OtpService(
-    IOfficerService officers,
-    IOtpSender sender,
-    IJwtTokenService tokens,
-    IOptions<OtpOptions> options,
-    ILogger<OtpService> logger) : IOtpService
+internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJwtTokenService tokens,IOptions<OtpOptions> options, ILogger<OtpService> logger) : IOtpService
 {
     public async Task<SendOtpResponse> SendAsync(SendOtpRequest request, CancellationToken ct)
     {
@@ -59,8 +54,7 @@ internal sealed class OtpService(
         };
     }
 
-    public async Task<VerifyOtpResponse> VerifyAsync(
-        VerifyOtpRequest request, string? clientIp, CancellationToken ct)
+    public async Task<VerifyOtpResponse> VerifyAsync(VerifyOtpRequest request, string? clientIp, CancellationToken ct)
     {
         var result = await officers.ValidateOtpAsync(request.Mobile, request.Otp, ct);
 

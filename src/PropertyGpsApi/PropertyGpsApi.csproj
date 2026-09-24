@@ -27,9 +27,7 @@
     <!-- Local developer credentials. Copied beside the exe so it is found when the app is
          launched from bin (which is what Visual Studio does), but NEVER included in a
          publish: production supplies these as environment variables. -->
-    <Content Update="appsettings.Local.json"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Local.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
 </Project>

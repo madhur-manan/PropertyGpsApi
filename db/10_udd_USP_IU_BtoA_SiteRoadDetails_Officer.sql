@@ -40,10 +40,22 @@
 
     SET XACT_ABORT ON is added because the API calls this inside a transaction it owns.
 
-    The behaviour of the KSRSAC guard is deliberately unchanged: a road that does not
-    match masterDB_prod.dbo.MstRoadKSRAC on both id and exact name still returns
-    'Invalid KSRSAC Road Details' with Status = 0 rather than raising. The API reads
-    that per-road Status and must not assume success.
+    The KSRSAC guard no longer decides whether the road is stored.
+
+    It used to: a road that did not match masterDB_prod.dbo.MstRoadKSRAC on both id and
+    exact name returned 'Invalid KSRSAC Road Details' with Status = 0 and wrote nothing,
+    and because the API runs every write in one transaction, that discarded the whole
+    survey - the application row, the roads that did match, and the move to status 13.
+
+    That made a legitimate answer impossible to submit. When an officer answers "not in
+    the list" the device sends road id 999, and 999 exists exactly once in the master, in
+    an unrelated ward. No answer the officer could give would save.
+
+    So the lookup still runs, but only to set @KsracMatched, which is returned as a new
+    output column. The road is written either way and Status now means STORED on both
+    paths. An unrecognised road is a warning the API logs and passes to QC, not a
+    rejection. Callers reading Status must not infer that the road was recognised -
+    read KsracMatched for that.
 */
 
 USE UDD_KHATABTOA_TEST;
@@ -91,6 +103,10 @@ BEGIN
 
 
 
+	 -- The KSRSAC lookup is unchanged, but it no longer decides whether the road is
+	 -- stored - only whether it is reported as verified. See the header note.
+	 DECLARE @KsracMatched BIT = 0;
+
 	 if exists (SELECT   R.Road_ID FROM BtoA_EPIDMetaData M INNER JOIN masterDB_prod.dbo.mst_AROMapping A
 			ON A.GBAZoneID = M.MD_ZoneId
 			AND A.BBMPWardId = M.MD_WardId
@@ -100,6 +116,7 @@ BEGIN
 			AND R.BBMPWardId = A.BBMPWardId
 			AND R.Road_ID = @BtoA_RoadId and R.Road_Name=@BtoA_RoadName
 		WHERE M.MD_APP_ID = @BtoA_MainAppId)
+		SET @KsracMatched = 1;
 
 	BEGIN
     IF not exists(select * from [BtoA_SiteRoadDetails_Officer] where Ofcr_App_Id=@BtoA_MainAppId and Ofcr_RoadId=@BtoA_RoadId and  Ofcr_SiteRoadRowID=@BtoA_SiteRoadRowID  and CRole=@CRole and CBy=@CBy	)
@@ -241,19 +258,16 @@ BEGIN
     END
 
     -- OUTPUT
+    --
+    -- Status means STORED, on both paths. Whether the road was recognised is carried
+    -- by KsracMatched, which the API reports as a warning rather than a failure.
     SELECT
-        @Message AS Message,
+        CASE WHEN @KsracMatched = 1 THEN @Message
+             ELSE @Message + ' (road not recognised in KSRSAC)' END AS Message,
         @ResultStatus AS Status,
         @BtoA_RoadRowId AS RoadRowId,
-		@BtoA_ApplicationDisplayId as DisplayRequestID;
-	end
-	else
-	begin
-	SELECT
-        'Invalid KSRSAC Road Details' AS Message,
-        cast(0 as bit) AS Status,
-        0  AS RoadRowId,
-		@BtoA_ApplicationDisplayId as DisplayRequestID;
+		@BtoA_ApplicationDisplayId as DisplayRequestID,
+		@KsracMatched AS KsracMatched;
 	end
 END
 

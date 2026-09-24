@@ -11,6 +11,5 @@ public interface IMasterService
 {
     Task<IReadOnlyList<ZoneDto>> ZonesAsync(int corporationId, CancellationToken ct);
     Task<IReadOnlyList<WardDto>> WardsAsync(int zoneId, CancellationToken ct);
-    Task<IReadOnlyList<StreetDto>> StreetsAsync(
-        int corporationId, int zoneId, int wardId, CancellationToken ct);
+    Task<IReadOnlyList<StreetDto>> StreetsAsync(int corporationId, int zoneId, int wardId, CancellationToken ct);
 }

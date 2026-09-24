@@ -15,6 +15,5 @@ namespace PropertyGpsApi.Interfaces;
 /// </summary>
 public interface ISubmitMediaService
 {
-    Task<IReadOnlyDictionary<string, string>> StoreAsync(
-        SubmitVerificationRequest request, IFormFileCollection files, CancellationToken ct);
+    Task<IReadOnlyDictionary<string, string>> StoreAsync(SubmitVerificationRequest request, IFormFileCollection files, CancellationToken ct);
 }
