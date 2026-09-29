@@ -86,7 +86,7 @@ public sealed class PropertyInfoController(
                 AppId = outcome.AppId,
                 Message = outcome.Message?.Trim()
             },
-            message: assign ? "Allotted to you." : "Released."));
+            message: assign ? "Allotted to you." : "Unassigned."));
     }
 
     /// <summary>
