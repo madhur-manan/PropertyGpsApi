@@ -61,8 +61,21 @@ public sealed class OtpOptions
     /// </summary>
     [Range(1, 9999)] public int DefaultRoleId { get; init; } = 116;
 
-    /// <summary>Development logs the code instead of sending an SMS.</summary>
+    /// <summary>
+    /// Development: logs the code AND returns it in the reply (local use only).
+    /// ServerLog: logs the code, never returns it - for a public server with no SMS yet.
+    /// SmsGateway: sends it by SMS.
+    /// </summary>
     [Required(AllowEmptyStrings = false)] public string Sender { get; init; } = "Development";
+
+    /// <summary>
+    /// OTP requests and attempts allowed per client address per window. Partitioned by IP, so
+    /// officers sharing one public address (an office behind NAT) share one allowance - raise
+    /// these there rather than in code.
+    /// </summary>
+    [Range(1, 1000)] public int SendPermitLimit { get; init; } = 5;
+    [Range(1, 1000)] public int VerifyPermitLimit { get; init; } = 20;
+    [Range(10, 3600)] public int RateLimitWindowSeconds { get; init; } = 300;
 }
 
 public sealed class StoredProcedureOptions

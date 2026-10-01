@@ -99,6 +99,11 @@ switch (otpSender)
                 "Otp:Sender=Development logs OTPs in clear text and may only be used in Development.");
         builder.Services.AddSingleton<IOtpSender, DevelopmentOtpSender>();
         break;
+    case "ServerLog":
+        // Allowed in Production on purpose: the code goes to the server's log only, never
+        // into the reply, so it is the safe stand-in while the SMS gateway is not set up.
+        builder.Services.AddSingleton<IOtpSender, ServerLogOtpSender>();
+        break;
     case "SmsGateway":
         builder.Services.AddOptions<SmsOptions>()
             .Bind(builder.Configuration.GetSection(SmsOptions.Section))
@@ -207,25 +212,33 @@ builder.Services.AddAuthorizationBuilder()
 // matters already lives inside USP_S_Officer_ValidateOTP.
 builder.Services.AddRateLimiter(rl =>
 {
+    // Limits come from Otp:* so a server where officers share one public address can raise
+    // them in web.config. The factory runs once per new client address.
     rl.AddPolicy(RateLimitPolicies.OtpSend, http =>
-        RateLimitPartition.GetFixedWindowLimiter(
+    {
+        var otp = http.RequestServices.GetRequiredService<IOptions<OtpOptions>>().Value;
+        return RateLimitPartition.GetFixedWindowLimiter(
             http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 5,
-                Window = TimeSpan.FromMinutes(5),
+                PermitLimit = otp.SendPermitLimit,
+                Window = TimeSpan.FromSeconds(otp.RateLimitWindowSeconds),
                 QueueLimit = 0
-            }));
+            });
+    });
 
     rl.AddPolicy(RateLimitPolicies.OtpVerify, http =>
-        RateLimitPartition.GetFixedWindowLimiter(
+    {
+        var otp = http.RequestServices.GetRequiredService<IOptions<OtpOptions>>().Value;
+        return RateLimitPartition.GetFixedWindowLimiter(
             http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 20,
-                Window = TimeSpan.FromMinutes(5),
+                PermitLimit = otp.VerifyPermitLimit,
+                Window = TimeSpan.FromSeconds(otp.RateLimitWindowSeconds),
                 QueueLimit = 0
-            }));
+            });
+    });
 
     rl.OnRejected = async (ctx, ct) =>
     {
@@ -277,10 +290,10 @@ if (!app.Environment.IsDevelopment()
     && network.KnownProxies.Length == 0 && network.KnownNetworks.Length == 0)
 {
     app.Logger.LogWarning(
-        "Network:KnownProxies and Network:KnownNetworks are both empty. X-Forwarded-For " +
-        "will be ignored, so the OTP rate limiter counts every officer behind the reverse " +
-        "proxy as one client and provides no practical protection. Configure the proxy " +
-        "address before treating this endpoint as rate limited.");
+        "Network:KnownProxies and Network:KnownNetworks are both empty, so X-Forwarded-For " +
+        "is ignored. That is correct when clients reach IIS directly. If this server sits " +
+        "behind a reverse proxy, the OTP rate limiter counts every officer as one client " +
+        "and provides no practical protection - configure the proxy address.");
 }
 
 // ---- Pipeline (order matters) --------------------------------------------
@@ -305,15 +318,15 @@ app.UseForwardedHeaders();
 // enters endpoint routing, so neither the fallback authorization policy nor the
 // MapFallback catch-all applies - otherwise /swagger would answer with our "endpoint does
 // not exist" envelope instead of the UI.
-//if (app.Environment.IsDevelopment())
-//{
+if (app.Environment.IsDevelopment())
+{
     app.UseSwaggerUI(ui =>
     {
         ui.SwaggerEndpoint("/openapi/v1.json", "PropertyGpsApi v1");
         ui.RoutePrefix = "swagger";
         ui.DocumentTitle = "PropertyGpsApi";
     });
-//}
+}
 
 app.UseRouting();
 app.UseRateLimiter();
