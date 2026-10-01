@@ -57,7 +57,10 @@ $dotnet = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
 if (Test-Path $dotnet) {
     $rt = & $dotnet --list-runtimes 2>$null
     $rt | ForEach-Object { "  runtime  $_" }
-    if ($rt -match 'Microsoft\.AspNetCore\.App 10\.') { Ok 'ASP.NET Core 10 runtime installed' } else { Miss 'ASP.NET Core 10 runtime (Microsoft.AspNetCore.App 10.x)' }
+    # Both are needed: ASP.NET Core 10 runs on top of the base .NET 10 runtime.
+    foreach ($fw in 'Microsoft.NETCore.App', 'Microsoft.AspNetCore.App') {
+        if ($rt -match ('^' + [regex]::Escape($fw) + ' 10\.')) { Ok "$fw 10 installed" } else { Miss "$fw 10.x - install the ASP.NET Core 10 Hosting Bundle" }
+    }
 } else { Miss "dotnet not found at $dotnet - install the ASP.NET Core 10 Hosting Bundle" }
 
 Head "Database server $DbServer`:$DbPort"

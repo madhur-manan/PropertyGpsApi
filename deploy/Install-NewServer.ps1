@@ -49,11 +49,17 @@ if (-not (Get-WebGlobalModule | Where-Object Name -eq 'AspNetCoreModuleV2')) {
 }
 Ok 'AspNetCoreModuleV2 registered'
 
+# Both frameworks are needed: Microsoft.AspNetCore.App runs on top of Microsoft.NETCore.App,
+# and a server can end up with the first and not the second (seen on NEW-KHATA-TEST, where
+# the app then failed with 500 "You must install or update .NET").
 $dotnet = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
-if (-not (Test-Path $dotnet) -or -not ((& $dotnet --list-runtimes) -match 'Microsoft\.AspNetCore\.App 10\.')) {
-    Fail 'ASP.NET Core 10 runtime not found. Install the ASP.NET Core 10 Hosting Bundle.'
+$runtimes = if (Test-Path $dotnet) { & $dotnet --list-runtimes } else { @() }
+foreach ($fw in 'Microsoft.NETCore.App', 'Microsoft.AspNetCore.App') {
+    if (-not ($runtimes -match ('^' + [regex]::Escape($fw) + ' 10\.'))) {
+        Fail "$fw 10.x not found. Install the ASP.NET Core 10 Hosting Bundle (dotnet-hosting-10.x-win.exe), run 'net stop was /y' and 'net start w3svc', then re-run."
+    }
 }
-Ok 'ASP.NET Core 10 runtime installed'
+Ok '.NET 10 and ASP.NET Core 10 runtimes installed'
 
 foreach ($f in 'PropertyGpsApi.dll', 'web.config') {
     if (-not (Test-Path (Join-Path $Source $f))) { Fail "$f not found in $Source - copy the whole package folder, including app\." }
