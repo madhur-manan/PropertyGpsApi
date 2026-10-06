@@ -18,18 +18,15 @@ using PropertyGpsApi.Models;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.Options;
 using PropertyGpsApi.Infrastructure.Security;
+using PropertyGpsApi.Infrastructure.Security.BodyEncryption;
 using PropertyGpsApi.Infrastructure.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// A git-ignored local overrides file, layered on top of appsettings.json.
-//
-// User secrets are the usual answer for developer credentials, but they only load in the
-// Development environment AND only for the Windows profile that created them, which makes
-// them quietly invisible when the app is launched from an IDE running as another user, or
-// from the published exe. This file has none of those failure modes. It is listed in
-// .gitignore and must never be committed.
-builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+// A git-ignored local overrides file (appsettings.Local.json), layered on top of
+// appsettings.json but below environment variables and the command line. See LocalSettings
+// for why it exists and why its position matters.
+LocalSettings.Add(builder.Configuration);
 
 if (!StartupChecks.TryEnsureConfigured(builder, out var configurationError))
 {
@@ -68,10 +65,22 @@ builder.Services.AddOptions<JwtOptions>()
     .Validate(o => !o.IsPlaceholder, "Jwt:Key is still the placeholder. Set a real key via user-secrets or an environment variable.")
     .ValidateOnStart();
 
+// Request-body encryption (pgps-body/1). The validator refuses a key the server could not use
+// - unreadable, under 3072 bits, an Id that is not its kid, a duplicate, the public TEST key
+// outside Development - and never prints the key itself.
+builder.Services.AddOptions<RequestEncryptionOptions>()
+    .Bind(builder.Configuration.GetSection(RequestEncryptionOptions.Section))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<RequestEncryptionOptions>, RequestEncryptionOptionsValidator>();
+
 // ---- Services ------------------------------------------------------------
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
+
+builder.Services.AddSingleton<RequestKeyRing>();
+builder.Services.AddSingleton<RequestBodyOpener>();
+builder.Services.AddSingleton<RequestBodyDecryptionFilter>();
 
 builder.Services.AddScoped<IOfficerService, OfficerService>();
 builder.Services.AddScoped<IOtpService, OtpService>();
@@ -81,6 +90,7 @@ builder.Services.AddSingleton<IAssignmentReader, AssignmentReader>();
 builder.Services.AddSingleton<IOwnerReader, OwnerReader>();
 builder.Services.AddScoped<IMasterService, MasterService>();
 builder.Services.AddScoped<IPushStatusService, PushStatusService>();
+builder.Services.AddScoped<IWardSyncService, WardSyncService>();
 builder.Services.AddScoped<IVerificationSubmitService, VerificationSubmitService>();
 builder.Services.AddScoped<ISubmitMediaService, SubmitMediaService>();
 builder.Services.AddScoped<IMediaAccessService, MediaAccessService>();
@@ -133,7 +143,9 @@ switch (mediaStore)
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
-builder.Services.AddControllers()
+// The decryption filter is a global resource filter: after authentication, authorization and
+// the per-action size limits, before model binding - so no controller ever sees a sealed body.
+builder.Services.AddControllers(mvc => mvc.Filters.AddService<RequestBodyDecryptionFilter>())
     .AddJsonOptions(json =>
     {
         // Pinned to Never: null means "not answered" on this contract and is distinct
@@ -240,6 +252,20 @@ builder.Services.AddRateLimiter(rl =>
             });
     });
 
+    // The version check is anonymous too: the app runs it before sign-in.
+    rl.AddPolicy(RateLimitPolicies.VersionCheck, http =>
+    {
+        var otp = http.RequestServices.GetRequiredService<IOptions<OtpOptions>>().Value;
+        return RateLimitPartition.GetFixedWindowLimiter(
+            http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = otp.VersionCheckPermitLimit,
+                Window = TimeSpan.FromSeconds(otp.RateLimitWindowSeconds),
+                QueueLimit = 0
+            });
+    });
+
     rl.OnRejected = async (ctx, ct) =>
     {
         if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
@@ -282,6 +308,21 @@ builder.Services.AddHealthChecks()
     .AddCheck<SqlServerHealthCheck>("sql", tags: ["ready"]);
 
 var app = builder.Build();
+
+// One line that says what this server will open. Resolving the key ring here also validates
+// RequestEncryption now, before the first request rather than during it.
+{
+    var encryption = app.Services.GetRequiredService<IOptions<RequestEncryptionOptions>>().Value;
+    var kids = app.Services.GetRequiredService<RequestKeyRing>().Kids;
+    var kidList = kids.Count == 0 ? "none" : string.Join(", ", kids);
+
+    if (encryption.Mode == RequestEncryptionMode.Off && !app.Environment.IsDevelopment())
+        app.Logger.LogWarning(
+            "Request-body encryption is Off: sealed bodies are refused and plain bodies accepted. " +
+            "Only acceptable while no app build seals its requests. Keys: {Kids}", kidList);
+    else
+        app.Logger.LogInformation("Request-body encryption: Mode {Mode}, keys {Kids}", encryption.Mode, kidList);
+}
 
 // Say so, loudly, when the limiter is not actually limiting anybody. The framework trusts
 // loopback out of the box, so this looks fine on a developer machine and silently does

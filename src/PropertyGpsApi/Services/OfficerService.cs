@@ -108,12 +108,13 @@ internal sealed class OfficerService(
         };
 
         // The procedure cannot give a correct ward id for a ward-scoped officer, so for
-        // those roles the jurisdictions are replaced with ones that carry it. Only when the
-        // lookup finds something: an officer whose mapping does not resolve keeps what the
-        // procedure returned rather than losing their ward entirely.
+        // those roles the jurisdictions are replaced with the wards they are mapped to -
+        // and only those, even when that is none. See ChooseJurisdictions.
         var corrected = await WardScopedJurisdictionsAsync(connection, officer.OfficerId, ct);
-        if (corrected.Count > 0)
-            officer = officer with { Jurisdictions = corrected };
+        officer = officer with
+        {
+            Jurisdictions = ChooseJurisdictions(officer.RoleId, corrected, officer.Jurisdictions)
+        };
 
         return new OtpValidationResult(OtpValidationOutcome.Valid, officer);
     }
@@ -132,7 +133,10 @@ internal sealed class OfficerService(
     /// Observed on officer 1036: "C.V. Ramannagar" and "Domlur", both carrying ward 57,
     /// where the true ids are 57 and 112.
     ///
-    /// This mirrors the procedure's own 116/117 branch exactly and adds the missing column.
+    /// This mirrors the procedure's own 116/117 branch and adds the missing column. It also
+    /// takes the zone and corporation from the mapping row when it has them: the procedure
+    /// pairs every mapped ward with the officer's OWN zone, so a ward mapped in another zone
+    /// matched nothing and silently dropped out of the list.
     /// The other role branches are left to the procedure rather than reimplemented here.
     ///
     /// FOR THE DBA: adding ARO.BBMPWardId to that SELECT would make this redundant and fix
@@ -154,8 +158,8 @@ internal sealed class OfficerService(
               AND wm.Map_OfcrRoleId = o.Ofcr_RoleId
               AND ISNULL(wm.isActive, 1) = 1
         JOIN dbo.mst_AROMapping aro WITH (NOLOCK)
-               ON aro.GBAZoneID = o.Ofcr_ZoneId
-              AND aro.easthiULBNAME_CorpId = o.Ofcr_CorporationId
+               ON aro.GBAZoneID = ISNULL(wm.Map_ZoneID, o.Ofcr_ZoneId)
+              AND aro.easthiULBNAME_CorpId = ISNULL(wm.Map_CorpId, o.Ofcr_CorporationId)
               AND aro.BBMPWardId = ISNULL(wm.Map_WardId, o.Ofcr_WardId)
         WHERE o.Ofcr_Id = @officerId
           AND ISNULL(o.Ofcr_Active, 0) = 1
@@ -164,9 +168,32 @@ internal sealed class OfficerService(
         """;
 
     /// <summary>
+    /// Role 116 (Case Worker) and 117 (RI): the field officers whose work is ward by ward.
+    /// </summary>
+    internal static bool IsWardScoped(int roleId) => roleId is 116 or 117;
+
+    /// <summary>
+    /// The zones/wards the app's dropdowns list.
+    ///
+    /// A ward-scoped officer gets exactly the wards they are mapped to and nothing else -
+    /// even when that is none. Falling back to the procedure's rows used to hand such an
+    /// officer whatever the procedure joined to, which is not their mapping; an empty list
+    /// instead shows "No ward is mapped to your account" in the app, which is the truth and
+    /// is fixed in the master tables. Other roles keep what they had.
+    /// </summary>
+    internal static IReadOnlyList<Jurisdiction> ChooseJurisdictions(
+        int roleId, IReadOnlyList<Jurisdiction> mapped, IReadOnlyList<Jurisdiction> fallback)
+        => IsWardScoped(roleId) ? mapped : (mapped.Count > 0 ? mapped : fallback);
+
+    public async Task<IReadOnlyList<Jurisdiction>> MappedWardsAsync(long officerId, CancellationToken ct)
+    {
+        await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
+        return await WardScopedJurisdictionsAsync(connection, officerId, ct);
+    }
+
+    /// <summary>
     /// Empty for any role that is not ward-scoped, and for a ward-scoped officer whose
-    /// zone/ward does not resolve - in both cases the caller keeps what it already had
-    /// rather than replacing real jurisdictions with none.
+    /// zone/ward does not resolve.
     /// </summary>
     private async Task<List<Jurisdiction>> WardScopedJurisdictionsAsync(
         SqlConnection connection, long officerId, CancellationToken ct)
@@ -243,7 +270,7 @@ internal sealed class OfficerService(
             CorporationName = first.CorporationName,
             ZoneId = first.Ofcr_ZoneId,
             WardId = first.Ofcr_WardId,
-            Jurisdictions = corrected.Count > 0 ? corrected : rows
+            Jurisdictions = ChooseJurisdictions(first.Ofcr_RoleId, corrected, rows
                 .Where(r => r.BbmpWardId is not null)
                 .GroupBy(r => (r.GbaZoneId, r.BbmpWardId))
                 .Select(g => g.First())
@@ -264,7 +291,7 @@ internal sealed class OfficerService(
                     WardName = r.BbmpWardName,
                     CorporationId = r.CorporationId,
                     CorporationName = r.CorporationName
-                }).ToList()
+                }).ToList())
         };
     }
 

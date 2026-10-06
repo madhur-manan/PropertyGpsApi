@@ -26,9 +26,16 @@ public sealed class SubmitVerificationResponse
     [JsonPropertyName("storedUtc")] public DateTimeOffset StoredUtc { get; init; }
 
     /// <summary>
-    /// One entry per unrecognised road, carried out of the service so the controller can
-    /// put it in the envelope's <c>errors</c> array. Not serialised here - it would say the
-    /// same thing twice on the wire.
+    /// Carried out of the service so the controller can put them in the envelope's
+    /// <c>errors</c> array. Not serialised here - it would say the same thing twice on the
+    /// wire. Two kinds:
+    /// <list type="bullet">
+    /// <item><c>ROAD_NOT_RECOGNISED</c>, field <c>siteDetails.roadDetails[i]</c> (i = the
+    /// road's index in the submitted roadDetails): one per road the KSRSAC master did not
+    /// recognise.</item>
+    /// <item><c>DECLARED_ROAD_NOT_ANSWERED</c>, field <c>siteDetails.roadDetails</c>: one per
+    /// active, non-blank declared road row the survey carried no entry for.</item>
+    /// </list>
     /// </summary>
     [JsonIgnore] public IReadOnlyList<ApiError> Warnings { get; init; } = [];
 }

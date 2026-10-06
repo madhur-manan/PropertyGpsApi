@@ -1,9 +1,6 @@
 using Dapper;
 using PropertyGpsApi.Models;
-using System.Data;
-using Microsoft.Extensions.Options;
 using PropertyGpsApi.Infrastructure.Data;
-using PropertyGpsApi.Infrastructure.Options;
 
 using PropertyGpsApi.Interfaces;
 
@@ -20,11 +17,9 @@ namespace PropertyGpsApi.Services;
 /// DISTINCT over one table, so a two-part name here works on every copy and keeps this flow
 /// independent of that fix.
 ///
-/// Both queries are parameterised; no value is ever concatenated into the SQL.
+/// Every query is parameterised; no value is ever concatenated into the SQL.
 /// </summary>
-internal sealed class MasterService(
-    ISqlConnectionFactory connections,
-    IOptions<StoredProcedureOptions> procedures) : IMasterService
+internal sealed class MasterService(ISqlConnectionFactory connections) : IMasterService
 {
     private const string ZonesSql = """
         SELECT DISTINCT GBAZoneID AS ZoneId, GBAZoneName_En AS ZoneName
@@ -41,48 +36,61 @@ internal sealed class MasterService(
         """;
 
     /// <summary>
-    /// Ward streets, from USP_S_GetMasterStreetDetails at level 5.
+    /// The ward's KSRSAC roads: MstRoadKSRAC for the BBMP zone/ward the GBA ward maps to.
     ///
-    /// Two things about that procedure shape the mapping. It returns the same fifteen
-    /// columns for every one of its nine levels, with the irrelevant ones cast to NULL, so
-    /// only four are read here. And level 5 INNER JOINs MstRoadKSRAC, which yields one row
-    /// per road name - ward 102/54 comes back as 65 rows for 64 distinct streets, because
-    /// one street carries two names. Grouping by id is what stops the picker showing a
-    /// duplicate.
+    /// This is the join USP_IU_BtoA_SiteRoadDetails_Officer verifies a submitted road with
+    /// (R.BBMPZoneID / R.BBMPWardId, then Road_ID + Road_Name), and Road_ID is the id space
+    /// every citizen Rd_RoadId lives in. The list used to come from USP_S_GetMasterStreetDetails
+    /// level 5, which returns BBMP street ids (Road_KSRACId): not one of them equals a Road_ID
+    /// in ward 102/54, so every road an officer picked was stored under the wrong id, reported
+    /// unverified, and compared against citizen roads in a different id space (defect D2).
+    /// It also hid every name but the longest one of a street (D16).
     /// </summary>
+    private const string WardRoadsSql = """
+        WITH w AS (
+            SELECT DISTINCT BBMPZoneID, BBMPWardId
+            FROM dbo.mst_AROMapping
+            WHERE easthiULBNAME_CorpId = @corporationId AND GBAZoneID = @zoneId AND BBMPWardId = @wardId
+              AND BBMPZoneID IS NOT NULL)
+        SELECT RoadId = R.Road_ID, RoadName = R.Road_Name
+        FROM dbo.MstRoadKSRAC R
+        JOIN w ON R.BBMPZoneID = w.BBMPZoneID AND R.BBMPWardId = w.BBMPWardId
+        WHERE R.Road_ID > 0 AND ISNULL(R.Road_Active, 1) = 1;
+        """;
+
     public async Task<IReadOnlyList<StreetDto>> StreetsAsync(
         int corporationId, int zoneId, int wardId, CancellationToken ct)
     {
-        var p = new DynamicParameters();
-        p.Add("@Level", 5, DbType.Int32);
-        p.Add("@CorporationID", corporationId, DbType.Int32);
-        p.Add("@ZoneID", zoneId, DbType.Int32);
-        p.Add("@WardID", wardId, DbType.Int32);
-        p.Add("@StreetID", null, DbType.Int32);
-        p.Add("@Btoa_RoadID", null, DbType.Int32);
-
         await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
-        var rows = await connection.QueryAsync<MasterStreetRow>(
-            Sp.Call(procedures.Value.FetchStreets, p, ct));
+        var rows = await connection.QueryAsync<KsracRoadRow>(new CommandDefinition(
+            WardRoadsSql, new { corporationId, zoneId, wardId }, cancellationToken: ct));
 
-        return rows
-            .Where(r => r.StreetID is > 0)
-            .GroupBy(r => r.StreetID!.Value)
-            .Select(g => new StreetDto
-            {
-                StreetId = g.Key,
-                // Longest name wins: where a street carries two, the fuller one is the more
-                // useful label for an officer choosing from a list.
-                StreetName = g.Select(r => r.StreetName?.Trim())
-                              .Where(n => !string.IsNullOrEmpty(n))
-                              .OrderByDescending(n => n!.Length)
-                              .FirstOrDefault(),
-                WardId = g.First().WardID ?? wardId,
-                ZoneId = g.First().ZoneID ?? zoneId
-            })
-            .OrderBy(s => s.StreetName)
-            .ToList();
+        return ToStreets(rows, zoneId, wardId);
     }
+
+    /// <summary>
+    /// One picker entry per road name. The master digitises the roads of a ward as segments,
+    /// several Road_IDs under one name (ward 102/54: 132 roads under 62 names, e.g. 976 and
+    /// 9317 'Bile Shivale', both on one BBMP street); listing each would put identical entries
+    /// side by side that the officer cannot tell apart. Any of the ids verifies in the road
+    /// procedure (it matches Road_ID + Road_Name within the ward), so the lowest one is kept,
+    /// with that row's own spelling. Names compare as the database does: trimmed,
+    /// case-insensitive.
+    /// </summary>
+    internal static IReadOnlyList<StreetDto> ToStreets(IEnumerable<KsracRoadRow> rows, int zoneId, int wardId) =>
+        rows.Where(r => r.RoadId > 0 && !string.IsNullOrWhiteSpace(r.RoadName))
+            .GroupBy(r => r.RoadName!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderBy(r => r.RoadId).First())
+            .Select(r => new StreetDto
+            {
+                StreetId = r.RoadId,
+                StreetName = r.RoadName!.Trim(),
+                WardId = wardId,
+                ZoneId = zoneId
+            })
+            .OrderBy(s => s.StreetName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(s => s.StreetId)
+            .ToList();
 
     public async Task<IReadOnlyList<ZoneDto>> ZonesAsync(int corporationId, CancellationToken ct)
     {

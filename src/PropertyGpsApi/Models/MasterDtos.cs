@@ -16,10 +16,13 @@ public sealed class WardDto
 }
 
 /// <summary>
-/// One street in a ward, for the road pickers on the survey form.
+/// One road of a ward, for the road pickers on the survey form.
 ///
-/// Without this list both pickers fall back to free text, which is how the same road ends
-/// up spelled three ways across a ward and stops matching the KSRSAC master on submit.
+/// The JSON names are kept for the app, but the values are KSRSAC roads: <c>streetId</c> is
+/// MstRoadKSRAC.Road_ID - the id space of every citizen Rd_RoadId and of the KSRSAC check on
+/// submit - and <c>streetName</c> is that road's Road_Name, exactly as the submit must send
+/// it back (roadId / roadName) for the road to verify. They used to be BBMP street ids
+/// (Road_KSRACId), which match no Road_ID (defect D2).
 /// </summary>
 public sealed class StreetDto
 {
@@ -29,16 +32,9 @@ public sealed class StreetDto
     [JsonPropertyName("zoneId")] public int ZoneId { get; init; }
 }
 
-/// <summary>
-/// USP_S_GetMasterStreetDetails returns the same fifteen columns for all nine of its
-/// levels, with the ones that do not apply cast to NULL. This is that shape; only four of
-/// the columns carry anything at level 5.
-/// </summary>
-internal sealed class MasterStreetRow
+/// <summary>One MstRoadKSRAC road of a ward (MasterService.StreetsAsync).</summary>
+internal sealed class KsracRoadRow
 {
-    public int? CorporationID { get; init; }
-    public int? ZoneID { get; init; }
-    public int? WardID { get; init; }
-    public int? StreetID { get; init; }
-    public string? StreetName { get; init; }
+    public int RoadId { get; init; }
+    public string? RoadName { get; init; }
 }

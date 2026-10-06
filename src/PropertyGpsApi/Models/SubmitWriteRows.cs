@@ -31,3 +31,19 @@ internal sealed class AppWriteRow
     public int AppId { get; init; }
 }
 
+/// <summary>One BtoA_SiteRoadDetails row of the application being submitted.</summary>
+internal sealed class DeclaredRoadRow
+{
+    public int RowId { get; init; }
+    public bool Active { get; init; }
+    public string? RoadId { get; init; }
+    public string? RoadName { get; init; }
+    public string? EnteredRoadName { get; init; }
+    public string? PrivateRoadName { get; init; }
+    public string? PrivateRoadText { get; init; }
+
+    /// <summary>The same rule the fetch uses to leave a row out (PropertyMapper.IsBlankRoad).</summary>
+    public bool IsBlank =>
+        Services.PropertyMapper.IsBlankRoad(RoadId, RoadName, EnteredRoadName, PrivateRoadName, PrivateRoadText);
+}
+

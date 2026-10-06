@@ -75,6 +75,14 @@ public sealed class OtpOptions
     /// </summary>
     [Range(1, 1000)] public int SendPermitLimit { get; init; } = 5;
     [Range(1, 1000)] public int VerifyPermitLimit { get; init; } = 20;
+
+    /// <summary>
+    /// app/version-check calls per client address per window. It shares this window because
+    /// it is the other anonymous call on the sign-in screen: the app checks its version
+    /// before the officer can ask for an OTP, and again on every open once signed in.
+    /// </summary>
+    [Range(1, 1000)] public int VersionCheckPermitLimit { get; init; } = 60;
+
     [Range(10, 3600)] public int RateLimitWindowSeconds { get; init; } = 300;
 }
 
@@ -93,8 +101,11 @@ public sealed class StoredProcedureOptions
     [Required(AllowEmptyStrings = false)] public string InsertNotPushed { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string FetchApplicationsCount { get; init; } = "";
 
-    [Required(AllowEmptyStrings = false)]
-    public string FetchStreets { get; init; } = "";
+    /// <summary>USP_S_GpsWardSync (db/20): the new Fetch / Update, by App_Id, 100 at a time.</summary>
+    [Required(AllowEmptyStrings = false)] public string WardSync { get; init; } = "";
+
+    /// <summary>USP_U_GpsWardSyncAck (db/20): records IsPushedToGps once the phone has saved a batch.</summary>
+    [Required(AllowEmptyStrings = false)] public string WardSyncAck { get; init; } = "";
 
     [Required(AllowEmptyStrings = false)]
     public string SubmitApplication { get; init; } = "";

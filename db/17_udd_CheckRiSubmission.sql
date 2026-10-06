@@ -89,9 +89,12 @@ FROM BtoA_MainApp_Officer;
 
 -------------------------------------------------------------------------------
 -- 3. BtoA_SiteRoadDetails_Officer - the roads
---    One row per road the officer recorded. Ofcr_IsPresentInPublicRoadList = 1
---    means the road matched the KSRSAC master for that ward; 0 means it was
---    stored anyway and reported back to the app as unverified.
+--    One row per road the officer recorded. Ofcr_IsPresentInPublicRoadList is
+--    the citizen's / officer's own flag, passed through from the payload; it is
+--    NOT the KSRSAC check. Whether a road matched the KSRSAC master (Road_ID +
+--    Road_Name in the ward) is stored in no column: the API reports an unmatched
+--    road to the app as a ROAD_NOT_RECOGNISED warning. A row with isActive = 0 is
+--    a road marked not found, or one a later submit by the same officer replaced.
 -------------------------------------------------------------------------------
 SELECT Section = '3. BtoA_SiteRoadDetails_Officer (the roads)',
        Ofcr_SiteRoadRowID, Ofcr_App_Id, Ofcr_RoadId, Ofcr_RoadName, Ofcr_ActualRoadName,

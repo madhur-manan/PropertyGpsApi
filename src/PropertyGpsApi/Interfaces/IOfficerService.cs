@@ -20,6 +20,12 @@ public interface IOfficerService
     Task<Officer?> LoadAsync(string mobile, CancellationToken ct);
 
     /// <summary>
+    /// The wards a ward-scoped officer (116/117) is mapped to - mst_Ofcr_WardMapping, else
+    /// their own ward. Empty for other roles. The same list the app's dropdowns show.
+    /// </summary>
+    Task<IReadOnlyList<Jurisdiction>> MappedWardsAsync(long officerId, CancellationToken ct);
+
+    /// <summary>
     /// Who the bearer of a token is, and where they work — the `auth/me` answer.
     ///
     /// Returns the same shape as a sign-in but deliberately without a token; see

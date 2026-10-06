@@ -18,14 +18,10 @@ namespace PropertyGpsApi.Controllers;
 [Authorize]
 [Route(ApiRoutes.Base + "/propertyinfo")]
 public sealed class PropertyInfoController(
-    IPropertyService properties,
-    IApplicationService applications,
-    IPushStatusService pushStatus,
-    IVerificationSubmitService submissions,
-    ISubmitMediaService mediaBinder,
-    IMediaStore mediaStore,
-    IMediaAccessService mediaAccess,
-    IHistoryService history,
+    IPropertyService properties,IApplicationService applications,
+    IPushStatusService pushStatus,IVerificationSubmitService submissions,
+    ISubmitMediaService mediaBinder,IMediaStore mediaStore,
+    IMediaAccessService mediaAccess,IHistoryService history,
     ILogger<PropertyInfoController> logger) : ControllerBase
 {
     /// <summary>

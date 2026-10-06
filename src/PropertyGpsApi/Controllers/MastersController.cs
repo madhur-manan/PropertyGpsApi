@@ -42,8 +42,9 @@ public sealed class MastersController(IMasterService masters) : ControllerBase
     }
 
     /// <summary>
-    /// The ward street master, for the road pickers on the survey form. Without it both
-    /// pickers degrade to free text and the road names stop matching the KSRSAC master.
+    /// The ward's KSRSAC roads, for the road pickers on the survey form: streetId is the
+    /// MstRoadKSRAC Road_ID and streetName its Road_Name, the pair the submit sends back as
+    /// roadId / roadName (see StreetDto).
     /// </summary>
     [HttpGet("streets")]
     [ProducesResponseType<ApiResponse<IReadOnlyList<StreetDto>>>(StatusCodes.Status200OK)]
