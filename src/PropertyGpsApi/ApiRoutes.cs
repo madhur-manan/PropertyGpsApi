@@ -14,4 +14,5 @@ public static class RateLimitPolicies
 {
     public const string OtpSend = "otp-send";
     public const string OtpVerify = "otp-verify";
+    public const string VersionCheck = "version-check";
 }

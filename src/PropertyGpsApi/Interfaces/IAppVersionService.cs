@@ -9,6 +9,5 @@ namespace PropertyGpsApi.Interfaces;
 
 public interface IAppVersionService
 {
-    Task<VersionCheckResponse> CheckAsync(
-        VersionCheckRequest request, long officerId, int roleId, CancellationToken ct);
+    Task<VersionCheckResponse> CheckAsync(VersionCheckRequest request, long officerId, int roleId, CancellationToken ct);
 }

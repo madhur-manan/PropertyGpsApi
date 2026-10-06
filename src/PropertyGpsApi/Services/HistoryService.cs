@@ -39,7 +39,35 @@ internal sealed class HistoryService(
     /// </summary>
     private const int QcRoleId = 118;
 
-    private const string PageSql = """
+    // The two road subqueries read only this officer's current roads: not rows superseded by
+    // a resubmission (isActive 0), not roads marked not found (type 2), not another
+    // officer's. They used to read every officer row ever written for the application and
+    // order the street by the nvarchar row id (D23). Separate constants so
+    // db/27_udd_Check_RoadScenarios.sql can run them word for word (RoadSqlMirrorTests).
+    internal const string RoadCountSql = """
+        (SELECT COUNT(*) FROM dbo.BtoA_SiteRoadDetails_Officer rd WITH (NOLOCK)
+          WHERE rd.Ofcr_ApplicationDisplayId = mao.Ofcr_ApplicationDisplayId
+            AND rd.CBy = @officerId AND rd.isActive = 1
+            AND ISNULL(rd.Ofcr_Correction_Type_Id, 0) <> 2)
+        """;
+
+    // The street the officer navigates by, taken from the roads they actually submitted.
+    // ActualRoadName is what they typed when the citizen's declaration was wrong, so it wins
+    // over RoadName. Declared roads first, numerically; added roads (no row id) last.
+    internal const string StreetNameSql = """
+        (SELECT TOP (1) COALESCE(NULLIF(LTRIM(RTRIM(rn.Ofcr_ActualRoadName)), N''),
+                                 NULLIF(LTRIM(RTRIM(rn.Ofcr_RoadName)), N''))
+           FROM dbo.BtoA_SiteRoadDetails_Officer rn WITH (NOLOCK)
+          WHERE rn.Ofcr_ApplicationDisplayId = mao.Ofcr_ApplicationDisplayId
+            AND rn.CBy = @officerId AND rn.isActive = 1
+            AND ISNULL(rn.Ofcr_Correction_Type_Id, 0) <> 2
+            AND COALESCE(NULLIF(LTRIM(RTRIM(rn.Ofcr_ActualRoadName)), N''),
+                         NULLIF(LTRIM(RTRIM(rn.Ofcr_RoadName)), N'')) IS NOT NULL
+          ORDER BY CASE WHEN TRY_CAST(rn.Ofcr_SiteRoadRowID AS int) IS NULL THEN 1 ELSE 0 END,
+                   TRY_CAST(rn.Ofcr_SiteRoadRowID AS int), rn.Ofcr_RowId)
+        """;
+
+    private const string PageSql = $$"""
         SELECT
             ApplicationId = mao.Ofcr_ApplicationDisplayId,
             Epid          = mao.Ofcr_MotherEPID,
@@ -48,8 +76,7 @@ internal sealed class HistoryService(
             WardId        = md.MD_WardId,
             AppStatus     = ap.App_Status,
             SubmittedOn   = COALESCE(mao.UDte, mao.CDte),
-            RoadCount     = (SELECT COUNT(*) FROM dbo.BtoA_SiteRoadDetails_Officer rd WITH (NOLOCK)
-                             WHERE rd.Ofcr_ApplicationDisplayId = mao.Ofcr_ApplicationDisplayId),
+            RoadCount     = {{RoadCountSql}},
             LastRemark    = sd.Status_Remark,
             LastStatusId  = sd.Status_Id,
             AppliedOn     = ap.App_Cdte,
@@ -58,16 +85,7 @@ internal sealed class HistoryService(
             QcRemark      = qc.Status_Remark,
             QcOutcome     = qc.Status_Value,
             QcActedOn     = qc.CDte,
-            -- The street the officer navigates by, taken from the roads they
-            -- actually submitted. ActualRoadName is what they typed when the
-            -- citizen's declaration was wrong, so it wins over RoadName.
-            StreetName    = (SELECT TOP (1) COALESCE(NULLIF(LTRIM(RTRIM(rn.Ofcr_ActualRoadName)), N''),
-                                                     NULLIF(LTRIM(RTRIM(rn.Ofcr_RoadName)), N''))
-                             FROM dbo.BtoA_SiteRoadDetails_Officer rn WITH (NOLOCK)
-                             WHERE rn.Ofcr_ApplicationDisplayId = mao.Ofcr_ApplicationDisplayId
-                               AND COALESCE(NULLIF(LTRIM(RTRIM(rn.Ofcr_ActualRoadName)), N''),
-                                            NULLIF(LTRIM(RTRIM(rn.Ofcr_RoadName)), N'')) IS NOT NULL
-                             ORDER BY rn.Ofcr_SiteRoadRowID)
+            StreetName    = {{StreetNameSql}}
         FROM dbo.BtoA_MainApp_Officer mao WITH (NOLOCK)
         LEFT JOIN dbo.BtoAMainApp ap WITH (NOLOCK)
                ON ap.App_DisplayId = mao.Ofcr_ApplicationDisplayId

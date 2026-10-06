@@ -10,12 +10,7 @@ using PropertyGpsApi.Interfaces;
 namespace PropertyGpsApi.Services;
 
 
-internal sealed class OtpService(
-    IOfficerService officers,
-    IOtpSender sender,
-    IJwtTokenService tokens,
-    IOptions<OtpOptions> options,
-    ILogger<OtpService> logger) : IOtpService
+internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJwtTokenService tokens,IOptions<OtpOptions> options, ILogger<OtpService> logger) : IOtpService
 {
     public async Task<SendOtpResponse> SendAsync(SendOtpRequest request, CancellationToken ct)
     {
@@ -59,9 +54,14 @@ internal sealed class OtpService(
         };
     }
 
-    public async Task<VerifyOtpResponse> VerifyAsync(
-        VerifyOtpRequest request, string? clientIp, CancellationToken ct)
+    public async Task<VerifyOtpResponse> VerifyAsync(VerifyOtpRequest request, string? clientIp, CancellationToken ct)
     {
+        // Checked before the database, so a blocked code never counts toward the per-officer
+        // lockout inside USP_S_Officer_ValidateOTP.
+        if (IsBlockedFixedCode(request.Otp))
+            throw ApiException.Unprocessable(
+                "That code is not correct or has expired.", ApiErrorCodes.OtpInvalid);
+
         var result = await officers.ValidateOtpAsync(request.Mobile, request.Otp, ct);
 
         switch (result.Outcome)
@@ -123,12 +123,27 @@ internal sealed class OtpService(
     }
 
     /// <summary>
+    /// USP_I_OTP ignores the code we generate for a hardcoded list of mobile numbers and
+    /// stores one of these instead - so anyone who knows one of those numbers could sign in
+    /// with a code that is printed in the procedure. Refused everywhere except Development
+    /// (local testing), which means those accounts cannot sign in through this API.
+    /// </summary>
+    internal static readonly IReadOnlySet<string> LegacyFixedOtps = new HashSet<string> { "999999", "673489" };
+
+    internal bool IsBlockedFixedCode(string? otp) =>
+        sender is not DevelopmentOtpSender && otp is not null && LegacyFixedOtps.Contains(otp.Trim());
+
+    /// <summary>
     /// RandomNumberGenerator, not Random: a predictable authentication code is no code.
-    /// Leading zeros are preserved, so "000123" stays six characters.
+    /// Leading zeros are preserved, so "000123" stays six characters. Never one of the
+    /// blocked fixed codes, so a genuine code can always be used.
     /// </summary>
     private static string GenerateOtp(int length)
     {
         var upperExclusive = (int)Math.Pow(10, length);
-        return RandomNumberGenerator.GetInt32(0, upperExclusive).ToString().PadLeft(length, '0');
+        string otp;
+        do { otp = RandomNumberGenerator.GetInt32(0, upperExclusive).ToString().PadLeft(length, '0'); }
+        while (LegacyFixedOtps.Contains(otp));
+        return otp;
     }
 }

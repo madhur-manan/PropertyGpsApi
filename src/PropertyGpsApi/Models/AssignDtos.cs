@@ -6,7 +6,7 @@ namespace PropertyGpsApi.Models;
 /// <summary>
 /// "Allot to me". The officer is taken from the bearer token, never the body - the legacy
 /// contract carried an assignedUserId field, which would have let any caller allot work to
-/// somebody else.
+/// somebody else. 
 /// </summary>
 public sealed class AssignRequest
 {

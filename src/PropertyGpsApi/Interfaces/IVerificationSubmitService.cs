@@ -28,11 +28,5 @@ public interface IVerificationSubmitService
     /// </summary>
     void Validate(SubmitVerificationRequest request, int roleId, long? officerWardId);
 
-    Task<SubmitVerificationResponse> SubmitAsync(
-        SubmitVerificationRequest request,
-        IReadOnlyDictionary<string, string> mediaUrls,
-        long officerId,
-        int roleId,
-        string? officerMobile,
-        CancellationToken ct);
+    Task<SubmitVerificationResponse> SubmitAsync(SubmitVerificationRequest request,IReadOnlyDictionary<string, string> mediaUrls,long officerId,int roleId,string? officerMobile,CancellationToken ct);
 }

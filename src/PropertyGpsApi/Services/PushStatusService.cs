@@ -19,8 +19,28 @@ internal sealed class PushStatusService(
     // USP_U_GpsPushedDetails branches on exactly these two values. Anything else falls
     // through every branch and returns NO result set at all, which would look like a silent
     // failure - so the mapping is closed here rather than passed through from the client.
-    private const int GpsSuccess = 200;
-    private const int GpsFailure = 500;
+    internal const int GpsSuccess = 200;
+    internal const int GpsFailure = 500;
+
+    /// <summary>
+    /// The device's verdict as one of the only two codes the procedure understands.
+    /// </summary>
+    /// <remarks>
+    /// Closed on purpose. The client sends a bool, never a status code: if this ever widened
+    /// to pass a number through, an unrecognised value would take no branch in the procedure,
+    /// return no row, and be reported as "not accepted" while the application quietly kept
+    /// IsPushedToGps = 0 - a ward that downloads forever with no error anywhere.
+    /// </remarks>
+    internal static int StatusCodeFor(bool success) => success ? GpsSuccess : GpsFailure;
+
+    /// <summary>
+    /// What is recorded against the application: the device's own words when it sent any,
+    /// and otherwise a sentence saying which side the record ended up on.
+    /// </summary>
+    internal static string RemarkFor(PushStatusItem item) =>
+        string.IsNullOrWhiteSpace(item.Message)
+            ? (item.Success ? "Stored on device via PropertyGpsApi" : "Device reported a failure")
+            : item.Message.Trim();
 
     public async Task<PushStatusResponse> RecordAsync(
         PushStatusRequest request, long officerId, int roleId, CancellationToken ct)
@@ -34,10 +54,16 @@ internal sealed class PushStatusService(
         {
             ct.ThrowIfCancellationRequested();
 
-            var statusCode = item.Success ? GpsSuccess : GpsFailure;
-            var message = string.IsNullOrWhiteSpace(item.Message)
-                ? (item.Success ? "Stored on device via PropertyGpsApi" : "Device reported a failure")
-                : item.Message.Trim();
+            var statusCode = StatusCodeFor(item.Success);
+            var message = RemarkFor(item);
+
+            // The device saying it could not store a record. The flag stays 0 and the ward
+            // fetch will offer it again, which is the correct outcome - but it is also what a
+            // device quietly failing to save anything looks like, so it is said out loud.
+            if (!item.Success)
+                logger.LogWarning(
+                    "Device reported it did NOT store application {ApplicationId} (EPID {Epid}): {Reason}",
+                    item.ApplicationId, item.Epid, message);
 
             var update = new DynamicParameters();
             update.Add("@App_DisplayId", item.ApplicationId, DbType.AnsiString, size: 50);
@@ -49,12 +75,25 @@ internal sealed class PushStatusService(
                 Sp.Call(sp.UpdatePushedDetails, update, ct));
 
             var accepted = row?.Status == 1;
+            var verdict = row?.Message?.Trim() ?? "The status procedure returned no result.";
+
+            // Named per item, not merely counted. The device cannot fail this call loudly - a
+            // ward that downloaded and saved must not be discarded because the acknowledgement
+            // did not land - so this log is the only place a rejected acknowledgement is
+            // visible at all. Without it, an application the procedure never matched reads
+            // exactly like one it marked pushed, and simply turns up again on the next fetch.
+            if (!accepted)
+                logger.LogWarning(
+                    "Push status NOT accepted for application {ApplicationId} (EPID {Epid}) " +
+                    "from officer {OfficerId}: {Verdict}",
+                    item.ApplicationId, item.Epid, officerId, verdict);
+
             results.Add(new PushStatusResult
             {
                 ApplicationId = item.ApplicationId,
                 Epid = item.Epid,
                 Accepted = accepted,
-                Message = row?.Message?.Trim() ?? "The status procedure returned no result."
+                Message = verdict
             });
 
             // Audit trail for the exchange, per BBMP's own convention for this endpoint.

@@ -6,6 +6,5 @@ namespace PropertyGpsApi.Interfaces;
 
 internal interface IOwnerReader
 {
-    Task<IReadOnlyDictionary<int, OwnerSummary>> ForAsync(
-        SqlConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct);
+    Task<IReadOnlyDictionary<int, OwnerSummary>> ForAsync(SqlConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct);
 }

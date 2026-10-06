@@ -93,6 +93,37 @@ public sealed class SiteDetailsDto
     /// collected here rather than left to duplicate the whole application.
     /// </summary>
     [JsonPropertyName("roadRowIds")] public IReadOnlyList<int> RoadRowIds { get; init; } = [];
+
+    /// <summary>
+    /// The same road rows, each with its own declaration. The road fields above describe
+    /// only one of them (the lowest row id), which is all older apps read: every card then
+    /// showed that one road, and confirming a card filed that road over the citizen's own.
+    /// Both USP_S_GpsWardSync and USP_S_GetAppDetails return each row's own road columns;
+    /// only the ward sync adds the typed name (Rd_EnteredRoadName) and leaves out inactive
+    /// rows. Blank rows (PropertyMapper.IsBlankRoad) are left out of both lists.
+    /// </summary>
+    [JsonPropertyName("roads")] public IReadOnlyList<RoadDto> Roads { get; init; } = [];
+}
+
+/// <summary>One declared road: one row of BtoA_SiteRoadDetails.</summary>
+public sealed class RoadDto
+{
+    [JsonPropertyName("roadRowId")] public int RoadRowId { get; init; }
+    [JsonPropertyName("roadType")] public string? RoadType { get; init; }
+
+    /// <summary>The street-master road this one is on (public) or nearest to (private).</summary>
+    [JsonPropertyName("roadId")] public string? RoadId { get; init; }
+    [JsonPropertyName("roadName")] public string? RoadName { get; init; }
+
+    /// <summary>What the citizen typed for this road, e.g. "3rd Cross".</summary>
+    [JsonPropertyName("enteredRoadName")] public string? EnteredRoadName { get; init; }
+
+    /// <summary>0/1 as the citizen declared it; null where the procedure does not say.</summary>
+    [JsonPropertyName("isPresentInPublicRoadList")] public int? IsPresentInPublicRoadList { get; init; }
+
+    [JsonPropertyName("privateRoadId")] public string? PrivateRoadId { get; init; }
+    [JsonPropertyName("privateRoadName")] public string? PrivateRoadName { get; init; }
+    [JsonPropertyName("privateRoadText")] public string? PrivateRoadText { get; init; }
 }
 
 /// <summary>One raw row of USP_S_GetAppDetails. Column names match its aliases exactly.</summary>
@@ -141,5 +172,24 @@ internal sealed class PropertyRow
     public decimal? residentailsExtentinSqft { get; init; }
     public int? isCornorPlot { get; init; }
     public int? Site_numberOfRoadFacingSides { get; init; }
-    public int? Rd_RoadRow_ID { get; init; }
+    // Settable, not init: the old fetch (USP_S_GetAppDetails, BBMP's) neither filters out
+    // inactive road rows nor returns the typed name, so PropertyService reads both from
+    // BtoA_SiteRoadDetails itself and applies them here (PropertyMapper.ApplyRoadState).
+    public int? Rd_RoadRow_ID { get; set; }
+
+    // The road row's own declaration. Both fetch procedures return these except
+    // Rd_EnteredRoadName, which only USP_S_GpsWardSync does; the old fetch fills it in after.
+    public bool? Rd_isPresentInPublicRoadList { get; init; }
+    public string? Rd_PrivateRoadId { get; init; }
+    public string? Rd_PrivateRoadText { get; init; }
+    public string? Rd_PrivateRoadName { get; init; }
+    public string? Rd_EnteredRoadName { get; set; }
+}
+
+/// <summary>One BtoA_SiteRoadDetails row's active flag and typed name (old fetch only).</summary>
+internal sealed class RoadRowState
+{
+    public int RowId { get; init; }
+    public bool Active { get; init; }
+    public string? EnteredRoadName { get; init; }
 }

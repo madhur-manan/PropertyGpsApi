@@ -12,13 +12,11 @@ public sealed class VersionCheckRequest
     public string Platform { get; init; } = "";
 
     /// <summary>
-    /// The installed version, as MAJOR.MINOR.
+    /// The installed version, in full ("1.1.0"). Builds before 1.1.0 send only MAJOR.MINOR
+    /// ("1.0"), which still compares correctly.
     ///
-    /// Two parts, not three, because USP_CheckMobileAppVersion compares with
-    /// CAST(... AS FLOAT): "1.0.0" cannot cast and the check comes back ERROR. The app
-    /// therefore sends "1.0" and keeps its own full version for its own comparison. See
-    /// the note on the controller - this is a workaround for a defect in the procedure,
-    /// not a contract we would choose.
+    /// Needs db/24: the original USP_CheckMobileAppVersion compared with
+    /// CAST(... AS FLOAT), so "1.1.0" could not cast and the check came back ERROR.
     /// </summary>
     [Required(AllowEmptyStrings = false)]
     [MaxLength(20)]

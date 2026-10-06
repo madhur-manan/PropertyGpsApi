@@ -6,3 +6,13 @@ obj/
 appsettings.Local.json
 appsettings.*.local.json
 publish/
+
+# Private keys (request-body encryption, certificates). They live outside every repository,
+# e.g. D:\PropertyGpsKeys; these patterns are the backstop if one is ever copied in here.
+*.private.b64
+*.key.pem
+*.pfx
+
+# A copy of the build output that the API is run from, so a running instance
+# never locks bin\ and block the next build.
+.run/
