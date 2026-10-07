@@ -18,7 +18,12 @@ public sealed class JwtOptions
     [Required(AllowEmptyStrings = false)] public string Issuer { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string Audience { get; init; } = "";
 
-    [Range(5, 10080)] public int ExpiryMinutes { get; init; } = 480;
+    /// <summary>
+    /// Token lifetime, up to 30 days (43200). Safe that long because every request is also
+    /// checked against the session table (one phone per officer), which can end a session
+    /// at once.
+    /// </summary>
+    [Range(5, 43200)] public int ExpiryMinutes { get; init; } = 43200;
 
     public byte[] KeyBytes => System.Text.Encoding.UTF8.GetBytes(Key);
 
@@ -26,6 +31,18 @@ public sealed class JwtOptions
     public bool KeyIsStrongEnough => KeyBytes.Length >= 32;
 
     public bool IsPlaceholder => Key.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase);
+}
+
+public sealed class AuthOptions
+{
+    public const string Section = "Auth";
+
+    /// <summary>
+    /// One phone per officer: every request is checked against dbo.GpsOfficerSession.
+    /// False skips the check (sessions are still recorded) - a switch for rollout, so the
+    /// one-time re-sign-in after deploy can be timed.
+    /// </summary>
+    public bool SingleDeviceSessions { get; init; } = true;
 }
 
 public sealed class OtpOptions

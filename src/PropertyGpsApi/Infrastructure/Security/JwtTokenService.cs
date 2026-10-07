@@ -9,7 +9,11 @@ namespace PropertyGpsApi.Infrastructure.Security;
 
 public interface IJwtTokenService
 {
-    (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer);
+    /// <summary>
+    /// A token for this officer, carrying <paramref name="sessionId"/> as its sid claim so
+    /// every request can be checked against dbo.GpsOfficerSession (one phone per officer).
+    /// </summary>
+    (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer, Guid sessionId);
 }
 
 /// <summary>
@@ -25,11 +29,14 @@ public static class GpsClaims
     public const string ZoneId = "zoneId";
     public const string WardId = "wardId";
     public const string Mobile = "mobile";
+
+    /// <summary>The sign-in session (dbo.GpsOfficerSession.SessionId), as a GUID string.</summary>
+    public const string SessionId = "sid";
 }
 
 internal sealed class JwtTokenService(IOptions<JwtOptions> options, TimeProvider clock) : IJwtTokenService
 {
-    public (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer)
+    public (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer, Guid sessionId)
     {
         var jwt = options.Value;
         var expiresAt = clock.GetUtcNow().AddMinutes(jwt.ExpiryMinutes);
@@ -41,7 +48,8 @@ internal sealed class JwtTokenService(IOptions<JwtOptions> options, TimeProvider
             new(GpsClaims.UserId, officer.OfficerId.ToString()),
             new(GpsClaims.RoleId, officer.RoleId.ToString()),
             new(GpsClaims.Mobile, officer.Mobile ?? ""),
-            new("name", officer.Name ?? "")
+            new("name", officer.Name ?? ""),
+            new(GpsClaims.SessionId, sessionId.ToString("D"))
         };
 
         if (officer.CorporationId is { } corp) claims.Add(new Claim(GpsClaims.CorporationId, corp.ToString()));

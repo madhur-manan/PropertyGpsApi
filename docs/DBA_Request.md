@@ -309,6 +309,32 @@ UDte, URole, Ofcr_Notice_Document); `SELECT, INSERT, UPDATE` on `BtoA_DocumentTr
 
 ---
 
+## G. One phone per officer (7 October 2026)
+
+**G1. New table `dbo.GpsOfficerSession` in the master database.** Each officer is now bound
+to one phone: the first phone they sign in on (identified by Android's ANDROID_ID, which
+survives reinstalling the app). Every other phone is refused, even after the officer signs
+out; only an administrator can move them (G2). Builds before 1.1.0 send no phone id and are
+told to update. The table has one row per officer: `OfficerId` PK, `DeviceId` (the bound
+phone), `SessionId` (the sign-in live on it; cleared by sign-out), `ClientIp`, `StartedAt`,
+`EndedAt`, `ReplacedCount`. Every authenticated request checks it with a primary-key lookup.
+No procedures. Please create the table before the API that uses it is deployed, and grant
+the API's login `SELECT, INSERT, UPDATE` on it. Until then the API can run with
+`Auth:SingleDeviceSessions=false`, which signs officers in as before.
+
+**G2. Moving an officer to a new phone (until the admin screen exists).** For a lost,
+broken, replaced or factory-reset phone. Clears the binding, so the next phone the officer
+signs in on becomes theirs; the old phone is signed out at its next request:
+
+```sql
+UPDATE s SET s.DeviceId = NULL, s.SessionId = NULL, s.EndedAt = GETDATE()
+FROM dbo.GpsOfficerSession s
+JOIN dbo.mst_Officer o ON o.Ofcr_Id = s.OfficerId
+WHERE o.Ofcr_MNo = '<officer mobile number>';
+```
+
+---
+
 ## Summary
 
 | | Item | Blocking? |
@@ -329,6 +355,7 @@ UDte, URole, Ofcr_Notice_Document); `SELECT, INSERT, UPDATE` on `BtoA_DocumentTr
 | F4 | `USP_S_GetAppDetails`: inactive rows, typed name, TOP over rows | Only if the old fetch stays |
 | F5 | KSRSAC check without the property's street | Wrong warnings today |
 | F6, F7 | Street list source; extra permissions for D4 | For information |
+| G1 | `GpsOfficerSession` table and its grants (one phone per officer) | **Yes** — before the API that uses it |
 | B4, D2, D3, D5 | For discussion | — |
 
 Happy to walk through any of these at your desk, and to supply ready-to-review scripts for

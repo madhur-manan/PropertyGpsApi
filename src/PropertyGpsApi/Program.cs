@@ -58,6 +58,10 @@ builder.Services.AddOptions<OtpOptions>()
     .Bind(builder.Configuration.GetSection(OtpOptions.Section))
     .ValidateDataAnnotations().ValidateOnStart();
 
+builder.Services.AddOptions<AuthOptions>()
+    .Bind(builder.Configuration.GetSection(AuthOptions.Section))
+    .ValidateOnStart();
+
 builder.Services.AddOptions<JwtOptions>()
     .Bind(builder.Configuration.GetSection(JwtOptions.Section))
     .ValidateDataAnnotations()
@@ -84,6 +88,8 @@ builder.Services.AddSingleton<RequestBodyDecryptionFilter>();
 
 builder.Services.AddScoped<IOfficerService, OfficerService>();
 builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddScoped<IOfficerSessionStore, OfficerSessionStore>();
+builder.Services.AddScoped<SessionValidator>();
 builder.Services.AddScoped<IApplicationService, ApplicationService>();
 builder.Services.AddScoped<IPropertyService, PropertyService>();
 builder.Services.AddSingleton<IAssignmentReader, AssignmentReader>();
@@ -198,14 +204,21 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             // The framework default is an empty body. The mobile client must receive our
             // envelope, and critically must see retryable=true so an expired token sends
             // the officer back to sign-in instead of parking their survey as failed.
+            // One phone per officer: a valid signature is not enough, the token's session
+            // must still be the officer's row in dbo.GpsOfficerSession (db/29).
+            OnTokenValidated = async ctx =>
+            {
+                var check = await ctx.HttpContext.RequestServices.GetRequiredService<SessionValidator>()
+                    .CheckAsync(ctx.Principal!, ctx.HttpContext.RequestAborted);
+                if (check == SessionCheck.Current) return;
+
+                ctx.HttpContext.Items[SessionValidator.OutcomeKey] = check;
+                ctx.Fail("Session " + check);
+            },
             OnChallenge = ctx =>
             {
                 ctx.HandleResponse();
-                return ErrorEnvelopeWriter.WriteAsync(
-                    ctx.HttpContext, StatusCodes.Status401Unauthorized,
-                    ApiErrorCodes.AuthRequired,
-                    "Your session has expired. Please sign in again.",
-                    retryable: true);
+                return SessionValidator.WriteChallengeAsync(ctx.HttpContext);
             },
             OnForbidden = ctx => ErrorEnvelopeWriter.WriteAsync(
                 ctx.HttpContext, StatusCodes.Status403Forbidden,
