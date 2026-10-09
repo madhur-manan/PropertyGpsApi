@@ -21,7 +21,7 @@ public sealed class RoadFixValidationTests
     private const int Ward = 54;
 
     private static readonly VerificationSubmitService Service = new(
-        null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
+        null!, null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
 
     private const double P1Lat = 12.9101, P1Lng = 77.5601, P2Lat = 12.9105, P2Lng = 77.5609;
 

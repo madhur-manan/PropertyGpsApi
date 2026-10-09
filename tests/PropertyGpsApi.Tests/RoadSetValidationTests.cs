@@ -21,7 +21,7 @@ public sealed class RoadSetValidationTests
 
     // Validate() reads nothing from the database, so no connection is needed.
     private static readonly VerificationSubmitService Service = new(
-        null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
+        null!, null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
 
     private static SubmitRoadDetail Road(
         string? roadId = "618", int status = 0, int? rowId = 106518, int publicList = 1) => new()

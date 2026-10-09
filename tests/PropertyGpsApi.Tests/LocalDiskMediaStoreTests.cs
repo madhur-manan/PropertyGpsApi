@@ -79,6 +79,42 @@ public class LocalDiskMediaStoreTests : IDisposable
             "1234567890", "1234567890-0-property-20260101_000000-deadbeef.jpg", CancellationToken.None));
 
     [Fact]
+    public async Task Discarding_removes_the_files_it_names_and_only_those()
+    {
+        var store = Store();
+        var gone = await store.SaveAsync(Upload("a.jpg"), CancellationToken.None);
+        var kept = await store.SaveAsync(Upload("b.jpg"), CancellationToken.None);
+
+        await store.DiscardAsync([gone.Url], CancellationToken.None);
+
+        Assert.Null(await store.OpenAsync("1234567890", gone.Url.Split('/').Last(), CancellationToken.None));
+        Assert.NotNull(await store.OpenAsync("1234567890", kept.Url.Split('/').Last(), CancellationToken.None));
+    }
+
+    /// <summary>
+    /// It runs while another error is on its way out, so nothing it is handed - a URL from
+    /// elsewhere, a traversal, a file already gone, garbage - may throw or touch another file.
+    /// </summary>
+    [Fact]
+    public async Task Discarding_skips_anything_it_did_not_issue_and_never_throws()
+    {
+        var store = Store();
+        var kept = await store.SaveAsync(Upload(), CancellationToken.None);
+        var name = kept.Url.Split('/').Last();
+
+        await store.DiscardAsync(
+        [
+            "not a url",
+            "https://example.test/x",
+            $"https://example.test/view/1234567890/..%2F..%2F{name}",
+            $"https://example.test/view/1234567890/{name.Replace(".jpg", ".exe")}",
+            "https://example.test/view/1234567890/1234567890-0-property-20260101_000000-deadbeef.jpg",
+        ], CancellationToken.None);
+
+        Assert.NotNull(await store.OpenAsync("1234567890", name, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Rejects_a_file_over_the_configured_limit()
     {
         var ex = await Assert.ThrowsAsync<ApiException>(() =>

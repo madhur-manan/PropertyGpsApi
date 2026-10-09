@@ -28,7 +28,7 @@ public sealed class RoadFlowValidationTests
 
     // Validate() reads nothing from the database, so no connection is needed.
     private static readonly VerificationSubmitService Service = new(
-        null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
+        null!, null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
 
     // P1 = road front, P2 = nearest public road.
     private const double P1Lat = 12.9101, P1Lng = 77.5601, P2Lat = 12.9105, P2Lng = 77.5609;

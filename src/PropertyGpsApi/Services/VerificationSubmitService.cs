@@ -6,6 +6,7 @@ using PropertyGpsApi.Common;
 using PropertyGpsApi.Models;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.Options;
+using PropertyGpsApi.Infrastructure.Storage;
 
 using PropertyGpsApi.Interfaces;
 
@@ -20,13 +21,16 @@ namespace PropertyGpsApi.Services;
 /// half-written survey would leave an application carrying officer data with no status
 /// transition - invisible to the workflow and indistinguishable from "not yet surveyed".
 ///
-/// Media is written before this is called, and is never rolled back. An orphaned file
-/// costs disk and a sweeper reclaims it; a committed row pointing at a photograph that
-/// was never stored is destroyed evidence for a tax assessment, and since the device
-/// marks the record synced it would never be sent again.
+/// Media is written before this is called. A survey that fails before its commit is
+/// attempted discards the files stored for it: nothing can point at them, and every retry
+/// of a refused survey used to leave another full set behind. Once the commit has been
+/// attempted they are never removed - its outcome may be unknown, and a committed row
+/// pointing at a photograph that was deleted is destroyed evidence for a tax assessment,
+/// which the device, having marked the record synced, would never send again.
 /// </summary>
 internal sealed class VerificationSubmitService(
     ISqlConnectionFactory connections,
+    IMediaStore media,
     IOptions<StoredProcedureOptions> procedures,
     ILogger<VerificationSubmitService> logger) : IVerificationSubmitService
 {
@@ -36,6 +40,35 @@ internal sealed class VerificationSubmitService(
         long officerId,
         int roleId,
         string? officerMobile,
+        CancellationToken ct)
+    {
+        var commit = new CommitTracker();
+        try
+        {
+            return await WriteSurveyAsync(request, mediaUrls, officerId, roleId, officerMobile, commit, ct);
+        }
+        catch when (!commit.Attempted)
+        {
+            // Not CancellationToken ct: a phone that gave up mid-request cancels it, and
+            // its files must go all the same.
+            await media.DiscardAsync(mediaUrls.Values, CancellationToken.None);
+            throw;
+        }
+    }
+
+    /// <summary>Set just before the commit, so a failure can tell whether anything may have been saved.</summary>
+    private sealed class CommitTracker
+    {
+        public bool Attempted { get; set; }
+    }
+
+    private async Task<SubmitVerificationResponse> WriteSurveyAsync(
+        SubmitVerificationRequest request,
+        IReadOnlyDictionary<string, string> mediaUrls,
+        long officerId,
+        int roleId,
+        string? officerMobile,
+        CommitTracker commit,
         CancellationToken ct)
     {
         var sp = procedures.Value;
@@ -91,6 +124,7 @@ internal sealed class VerificationSubmitService(
                 "SELECT App_Status FROM BtoAMainApp WHERE App_Id = @id",
                 new { id = appId.Value }, transaction, 30, CommandType.Text, cancellationToken: ct));
 
+            commit.Attempted = true;
             await transaction.CommitAsync(ct);
 
             logger.LogInformation(
