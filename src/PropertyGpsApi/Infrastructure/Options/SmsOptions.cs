@@ -45,7 +45,7 @@ public sealed class SmsOptions
         "Your OTP for logging in to the {#var1#} is {#var2#}. Please do not share this OTP with anyone. Regards - BBMP";
 
     [Required(AllowEmptyStrings = false)]
-    public string ApplicationName { get; init; } = "BToA Application";
+    public string ApplicationName { get; init; } = "BtoA Application";
 
     /// <summary>
     /// Both gateways answer with a comma-separated string whose first field is 402 on success

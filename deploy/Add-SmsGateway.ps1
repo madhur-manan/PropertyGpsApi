@@ -17,7 +17,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $ApplicationName = 'BToA Application'
+    [string] $ApplicationName = 'BtoA Application'
 )
 $ErrorActionPreference = 'Stop'
 

@@ -25,7 +25,7 @@ public class SmsGatewayOtpSenderTests
     private const string ServiceKeyEncrypted = "31EzH31puR7yD3VThtLbwU00sfwWS2WyjHY9SGSoBlVOZVxyGd7Aog";
 
     private const string Message =
-        "Your OTP for logging in to the BToA Application is 123456. Please do not share this OTP with anyone. Regards - BBMP";
+        "Your OTP for logging in to the BtoA Application is 123456. Please do not share this OTP with anyone. Regards - BBMP";
 
     private static SmsOptions Options(string protocol) => new()
     {
