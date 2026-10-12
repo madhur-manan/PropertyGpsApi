@@ -53,4 +53,20 @@ public sealed class WardSyncController(IWardSyncService wardSync) : ControllerBa
             result,
             message: $"{result.Requested} recorded, {result.Updated} newly marked."));
     }
+
+    /// <summary>
+    /// The pull-down on the property list: who holds each of the phone's applications now,
+    /// so an allotment or a release made on another phone shows here. Downloads nothing.
+    /// </summary>
+    [HttpPost("holders")]
+    [ProducesResponseType<ApiResponse<WardHoldersResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<WardHoldersResponse>>> Holders(
+        [FromBody] WardHoldersRequest request, CancellationToken ct)
+    {
+        var result = await wardSync.HoldersAsync(request, User.RequireLong(GpsClaims.UserId), ct);
+
+        return Ok(ApiResponse<WardHoldersResponse>.Ok(
+            result,
+            message: $"{result.Holders.Count(h => h.AssignedToUserId != 0)} of {result.Holders.Count} allotted."));
+    }
 }

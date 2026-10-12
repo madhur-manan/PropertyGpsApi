@@ -68,11 +68,21 @@ internal sealed class WardSyncService(
         var assignmentsByApp = await assignments.ActiveForAsync(connection, appIds, ct);
         var ownersByApp = await owners.ForAsync(connection, appIds, ct);
 
+        // Once per sync, with the closed list: who holds what the phone already has.
+        List<WardSyncHolderDto> holders = [];
+        if (request.IncludeClosed)
+        {
+            var open = StillOpen(request.KnownAppIds, closed.Select(c => c.AppId));
+            holders = Holders(open, await assignments.ActiveForAsync(connection, open, ct));
+        }
+
         logger.LogInformation(
             "Ward sync for officer {OfficerId} zone {Zone} ward {Ward}: server {ServerCount}, phone {LocalCount} " +
-            "(sent {Known} ids), missing {MissingCount}, sending {Apps} applications ({Rows} rows), {Closed} closed",
+            "(sent {Known} ids), missing {MissingCount}, sending {Apps} applications ({Rows} rows), {Closed} closed, " +
+            "{Held} of {Holders} held",
             officerId, request.ZoneId, request.WardId, summary.ServerCount, summary.LocalCount,
-            request.KnownAppIds.Count, summary.MissingCount, grouped.Count, rows.Count, closed.Count);
+            request.KnownAppIds.Count, summary.MissingCount, grouped.Count, rows.Count, closed.Count,
+            holders.Count(h => h.AssignedToUserId != 0), holders.Count);
 
         return new WardSyncResponse
         {
@@ -80,9 +90,29 @@ internal sealed class WardSyncService(
             LocalCount = summary.LocalCount,
             MissingCount = summary.MissingCount,
             Items = grouped.Select(g => PropertyMapper.Map(g, assignmentsByApp, ownersByApp, officerId)).ToList(),
-            Closed = closed.Select(c => new WardSyncClosedDto { AppId = c.AppId, AppStatus = c.AppStatus }).ToList()
+            Closed = closed.Select(c => new WardSyncClosedDto { AppId = c.AppId, AppStatus = c.AppStatus }).ToList(),
+            Holders = holders
         };
     }
+
+    /// <summary>The applications the phone holds that are still workable here: not reported closed.</summary>
+    internal static List<int> StillOpen(IEnumerable<int> known, IEnumerable<int> closed)
+    {
+        var gone = closed.ToHashSet();
+        return known.Distinct().Where(id => !gone.Contains(id)).ToList();
+    }
+
+    /// <summary>
+    /// One entry per application, 0 when nobody holds it - so a phone clears a holder that
+    /// has released it, rather than only ever learning of new ones.
+    /// </summary>
+    internal static List<WardSyncHolderDto> Holders(
+        IEnumerable<int> appIds, IReadOnlyDictionary<int, AssignmentRow> held) =>
+        appIds.Select(id => new WardSyncHolderDto
+        {
+            AppId = id,
+            AssignedToUserId = held.TryGetValue(id, out var row) ? row.Arch_Id : 0
+        }).ToList();
 
     public async Task<WardSyncAckResponse> AckAsync(
         WardSyncAckRequest request, long officerId, CancellationToken ct)
@@ -104,6 +134,55 @@ internal sealed class WardSyncService(
             officerId, request.ZoneId, request.WardId, row.Requested, row.Updated);
 
         return new WardSyncAckResponse { Requested = row.Requested, Updated = row.Updated };
+    }
+
+    /// <summary>
+    /// Who holds each asked-for application now: its newest active row in
+    /// BtoA_Architect_AssignedApp, or 0. Limited to applications in the requested ward, so the
+    /// answer never names the holder of anything outside the officer's jurisdiction. The ids
+    /// arrive as one string, so a large ward cannot pass SQL Server's parameter limit.
+    /// </summary>
+    internal const string HoldersSql = """
+        SELECT AppId = ap.App_Id, Arch_Id = ISNULL(h.Arch_Id, 0)
+        FROM (SELECT DISTINCT AppId = TRY_CAST(value AS int) FROM STRING_SPLIT(@appIds, ',')) ids
+        JOIN dbo.BtoAMainApp ap WITH (NOLOCK) ON ap.App_Id = ids.AppId
+        OUTER APPLY (SELECT TOP (1) a.Arch_Id
+                     FROM dbo.BtoA_Architect_AssignedApp a WITH (NOLOCK)
+                     WHERE a.AppId = ap.App_Id AND a.IsActive = 1
+                     ORDER BY a.AssignmentDate DESC) h
+        WHERE EXISTS (SELECT 1 FROM dbo.BtoA_EPIDMetaData md WITH (NOLOCK)
+                      WHERE md.MD_APP_ID = ap.App_Id AND md.MD_MotherEPID = ap.App_MotherEPID
+                        AND md.MD_ZoneId = @zoneId AND md.MD_WardId = @wardId);
+        """;
+
+    public async Task<WardHoldersResponse> HoldersAsync(
+        WardHoldersRequest request, long officerId, CancellationToken ct)
+    {
+        RequirePositive(request.AppIds, "appIds");
+        await RequireMappedWardAsync(officerId, request.ZoneId, request.WardId, ct);
+        if (request.AppIds.Count == 0) return new WardHoldersResponse();
+
+        await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
+        var rows = (await connection.QueryAsync<HolderRow>(new CommandDefinition(
+            HoldersSql,
+            new { appIds = ToCsv(request.AppIds), zoneId = request.ZoneId, wardId = request.WardId },
+            commandTimeout: 60, cancellationToken: ct))).AsList();
+
+        logger.LogInformation(
+            "Holders for officer {OfficerId} zone {Zone} ward {Ward}: asked {Asked}, in the ward {Found}, {Held} held",
+            officerId, request.ZoneId, request.WardId, request.AppIds.Count, rows.Count,
+            rows.Count(r => r.Arch_Id != 0));
+
+        return new WardHoldersResponse
+        {
+            Holders = rows.Select(r => new WardSyncHolderDto { AppId = r.AppId, AssignedToUserId = r.Arch_Id }).ToList()
+        };
+    }
+
+    private sealed class HolderRow
+    {
+        public int AppId { get; init; }
+        public int Arch_Id { get; init; }
     }
 
     /// <summary>

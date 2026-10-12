@@ -95,6 +95,7 @@ public class WardSyncTests
         [InlineData(typeof(WardSyncRequest))]
         [InlineData(typeof(WardSyncResponse))]
         [InlineData(typeof(WardSyncClosedDto))]
+        [InlineData(typeof(WardSyncHolderDto))]
         [InlineData(typeof(WardSyncAckRequest))]
         [InlineData(typeof(WardSyncAckResponse))]
         public void Every_property_declares_its_wire_name(Type dto)
@@ -106,6 +107,116 @@ public class WardSyncTests
 
             Assert.True(missing.Count == 0,
                 $"{dto.Name} is missing [JsonPropertyName] on: {string.Join(", ", missing)}");
+        }
+    }
+
+    /// <summary>
+    /// Reported 2026-10-12 with a phone and an emulator as two RIs in one ward: a record one
+    /// of them released stayed "allotted to another officer" on the other, because a record
+    /// is downloaded once and its holder was never sent again.
+    /// </summary>
+    public class TheHolders
+    {
+        private static AssignmentRow Held(int appId, int officer) => new() { AppId = appId, Arch_Id = officer };
+
+        [Fact]
+        public void Every_open_record_the_phone_has_gets_its_holder_and_a_free_one_gets_zero()
+        {
+            var holders = WardSyncService.Holders(
+                [7, 8, 9],
+                new Dictionary<int, AssignmentRow> { [7] = Held(7, 11320), [9] = Held(9, 11331) });
+
+            Assert.Equal(
+                [(7, 11320), (8, 0), (9, 11331)],
+                holders.Select(h => (h.AppId, h.AssignedToUserId)));
+        }
+
+        [Fact]
+        public void A_record_reported_closed_is_left_out_and_each_id_counts_once() =>
+            Assert.Equal([7, 9], WardSyncService.StillOpen([7, 8, 9, 7], [8]));
+
+        [Fact]
+        public void The_holders_travel_with_their_wire_names()
+        {
+            var json = JsonSerializer.Serialize(new WardSyncResponse
+            {
+                Holders = [new WardSyncHolderDto { AppId = 8, AssignedToUserId = 0 }]
+            });
+
+            Assert.Contains("\"holders\":[{\"appId\":8,\"assignedToUserId\":0}]", json);
+        }
+
+        /// <summary>Asked about every record a phone holds, so the ids cannot be one parameter each.</summary>
+        [Fact]
+        public void The_holder_lookup_takes_its_ids_as_one_string()
+        {
+            Assert.Contains("STRING_SPLIT(@appIds, ',')", AssignmentReader.Sql);
+            Assert.DoesNotContain("IN @appIds", AssignmentReader.Sql);
+        }
+
+        // ---- the pull-down: propertyinfo/ward-sync/holders --------------------------------
+
+        private static readonly Jurisdiction Hoodi = new() { ZoneId = 102, WardId = 54, WardName = "Hoodi" };
+
+        private static WardSyncService Service(params Jurisdiction[] mapped) => new(
+            new ThrowingConnections(),
+            Options.Create(new StoredProcedureOptions()),
+            new MappedOfficer(mapped),
+            null!,
+            null!,
+            NullLogger<WardSyncService>.Instance);
+
+        [Fact]
+        public async Task The_pull_down_refuses_a_ward_that_is_not_the_officers_before_any_query()
+        {
+            var refused = await Assert.ThrowsAsync<ApiException>(() => Service(Hoodi).HoldersAsync(
+                new WardHoldersRequest { ZoneId = 109, WardId = 112, AppIds = [7] }, 11320, default));
+
+            Assert.Equal(403, refused.StatusCode);
+            Assert.Equal(ApiErrorCodes.OutsideJurisdiction, refused.Code);
+        }
+
+        [Fact]
+        public async Task The_pull_down_with_nothing_on_the_phone_asks_the_database_nothing()
+        {
+            var reply = await Service(Hoodi).HoldersAsync(new WardHoldersRequest { ZoneId = 102, WardId = 54 }, 11320, default);
+            Assert.Empty(reply.Holders);
+        }
+
+        [Fact]
+        public async Task The_pull_down_refuses_a_non_positive_id()
+        {
+            await Assert.ThrowsAsync<ApiException>(() => Service(Hoodi).HoldersAsync(
+                new WardHoldersRequest { ZoneId = 102, WardId = 54, AppIds = [7, 0] }, 11320, default));
+        }
+
+        /// <summary>
+        /// Only applications in the asked-for ward come back, so the pull-down never names the
+        /// holder of anything outside the officer's jurisdiction.
+        /// </summary>
+        [Fact]
+        public void The_pull_down_query_is_limited_to_the_ward_and_reads_the_active_holder()
+        {
+            var sql = WardSyncService.HoldersSql;
+            Assert.Contains("STRING_SPLIT(@appIds, ',')", sql);
+            Assert.Contains("md.MD_ZoneId = @zoneId AND md.MD_WardId = @wardId", sql);
+            Assert.Contains("a.IsActive = 1", sql);
+            Assert.Contains("ISNULL(h.Arch_Id, 0)", sql);
+        }
+
+        [Fact]
+        public void The_pull_down_body_and_reply_use_the_apps_names()
+        {
+            var request = JsonSerializer.Deserialize<WardHoldersRequest>(
+                """{"zoneId":102,"wardId":54,"appIds":[7,8]}""")!;
+            Assert.Equal((102, 54), (request.ZoneId, request.WardId));
+            Assert.Equal([7, 8], request.AppIds);
+
+            var reply = JsonSerializer.Serialize(new WardHoldersResponse
+            {
+                Holders = [new WardSyncHolderDto { AppId = 7, AssignedToUserId = 11331 }]
+            });
+            Assert.Equal("""{"holders":[{"appId":7,"assignedToUserId":11331}]}""", reply);
         }
     }
 

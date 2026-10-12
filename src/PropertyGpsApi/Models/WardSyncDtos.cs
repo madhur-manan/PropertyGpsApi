@@ -82,6 +82,48 @@ public sealed class WardSyncResponse
 
     /// <summary>Held applications that are no longer workable here. Empty unless asked for.</summary>
     [JsonPropertyName("closed")] public IReadOnlyList<WardSyncClosedDto> Closed { get; init; } = [];
+
+    /// <summary>
+    /// Who holds each application the phone already has and that is still workable, 0 for
+    /// nobody - sent with <see cref="Closed"/>, once per sync. An application is downloaded
+    /// once, so without this an allotment or a release made on another phone never reached
+    /// this one: a released record stayed "allotted to another officer" here for good.
+    /// </summary>
+    [JsonPropertyName("holders")] public IReadOnlyList<WardSyncHolderDto> Holders { get; init; } = [];
+}
+
+/// <summary>
+/// The pull-down on the property list: who holds each of these applications now. Nothing
+/// is downloaded - an allotment or a release made on another phone is all it learns.
+/// </summary>
+public sealed class WardHoldersRequest
+{
+    [Range(1, int.MaxValue)]
+    [JsonPropertyName("zoneId")]
+    public int ZoneId { get; init; }
+
+    [Range(1, int.MaxValue)]
+    [JsonPropertyName("wardId")]
+    public int WardId { get; init; }
+
+    /// <summary>The App_Ids the phone holds for this ward.</summary>
+    [MaxLength(WardSyncLimits.MaxHeld, ErrorMessage = "Too many application ids in one request.")]
+    [JsonPropertyName("appIds")]
+    public IReadOnlyList<int> AppIds { get; init; } = [];
+}
+
+public sealed class WardHoldersResponse
+{
+    /// <summary>One entry per asked-for application that is in the ward; 0 when it is free.</summary>
+    [JsonPropertyName("holders")] public IReadOnlyList<WardSyncHolderDto> Holders { get; init; } = [];
+}
+
+public sealed class WardSyncHolderDto
+{
+    [JsonPropertyName("appId")] public int AppId { get; init; }
+
+    /// <summary>The officer holding it now; 0 when it is free.</summary>
+    [JsonPropertyName("assignedToUserId")] public int AssignedToUserId { get; init; }
 }
 
 public sealed class WardSyncClosedDto

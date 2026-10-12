@@ -13,10 +13,17 @@ namespace PropertyGpsApi.Services;
 /// </summary>
 internal sealed class AssignmentReader : IAssignmentReader
 {
-    private const string Sql = """
-        SELECT AppId, Arch_Id, Arch_Name, Status, AssignmentDate
-        FROM dbo.BtoA_Architect_AssignedApp WITH (NOLOCK)
-        WHERE IsActive = 1 AND AppId IN @appIds;
+    /// <summary>
+    /// The ids go in as one comma-separated string, not as "IN @appIds": that expands to one
+    /// parameter per id, and the ward sync now asks about every application a phone holds -
+    /// a large ward would pass SQL Server's 2100-parameter limit.
+    /// </summary>
+    internal const string Sql = """
+        SELECT a.AppId, a.Arch_Id, a.Arch_Name, a.Status, a.AssignmentDate
+        FROM dbo.BtoA_Architect_AssignedApp a WITH (NOLOCK)
+        JOIN (SELECT DISTINCT AppId = TRY_CAST(value AS int) FROM STRING_SPLIT(@appIds, ',')) ids
+          ON ids.AppId = a.AppId
+        WHERE a.IsActive = 1;
         """;
 
     public async Task<IReadOnlyDictionary<int, AssignmentRow>> ActiveForAsync(
@@ -26,7 +33,7 @@ internal sealed class AssignmentReader : IAssignmentReader
 
         // One query for the whole page, never one per row.
         var rows = await connection.QueryAsync<AssignmentRow>(
-            new CommandDefinition(Sql, new { appIds }, cancellationToken: ct));
+            new CommandDefinition(Sql, new { appIds = string.Join(',', appIds.Distinct()) }, cancellationToken: ct));
 
         // An application should only have one active holding, but the table does not enforce
         // it, so keep the most recent rather than throwing on a duplicate.
