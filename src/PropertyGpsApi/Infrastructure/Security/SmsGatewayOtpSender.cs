@@ -17,6 +17,8 @@ namespace PropertyGpsApi.Infrastructure.Security;
 ///     same fields, but the password is sent as it is and the key is the service key,
 ///     DES-encrypted with the gateway's fixed key and Base64url-encoded.
 ///
+/// Both answer "402,MsgID = ..." on success.
+///
 /// SHA-1, SHA-512-without-HMAC and DES are the gateways' protocols, not a choice - they are
 /// what the providers validate against, so they cannot be "upgraded" unilaterally.
 ///
@@ -56,22 +58,18 @@ internal sealed partial class SmsGatewayOtpSender(
             throw new InvalidOperationException(
                 $"The SMS gateway returned HTTP {(int)response.StatusCode}.");
 
-        if (sms.Protocol == SmsOptions.SmsMobile)
+        // Both gateways report failure in the body, not the status code, so a 200 alone proves
+        // nothing: success is "402,MsgID = ..." (smsmobile1 confirmed on the test server,
+        // 2026-10-12). Treating anything else as success would mean reporting "OTP sent" for a
+        // message the officer never receives - which is what B2A_WEBAPI does.
+        var code = body.Split(',', 2)[0].Trim();
+        if (!string.Equals(code, sms.SuccessCode, StringComparison.Ordinal))
         {
-            // This gateway's success reply is not documented, and B2A_WEBAPI counts any reply
-            // as sent. Its reply is logged - digits masked - until its shape is known.
-            logger.LogInformation("SMS gateway replied for {MobileSuffix}: {Reply}",
+            // The whole reply, digits masked: a refusal's wording is the only clue to its cause.
+            logger.LogWarning("SMS gateway refused the OTP for {MobileSuffix}: {Reply}",
                 Suffix(mobile), Masked(body));
-        }
-        else
-        {
-            // Mgov reports failure in the body, not the status code, so a 200 alone proves
-            // nothing. Treating it as success would mean reporting "OTP sent" for a message
-            // the officer never receives.
-            var code = body.Split(',', 2)[0].Trim();
-            if (!string.Equals(code, sms.SuccessCode, StringComparison.Ordinal))
-                throw new InvalidOperationException(
-                    $"The SMS gateway rejected the message with code '{code}'.");
+            throw new InvalidOperationException(
+                $"The SMS gateway rejected the message with code '{Masked(code)}'.");
         }
 
         // Never log the message body or the code itself.

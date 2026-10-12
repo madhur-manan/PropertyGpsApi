@@ -48,8 +48,8 @@ public sealed class SmsOptions
     public string ApplicationName { get; init; } = "BToA Application";
 
     /// <summary>
-    /// Mgov only: it answers with a comma-separated string whose first field is 402 on
-    /// success. SmsMobile has no documented success reply; see SmsGatewayOtpSender.
+    /// Both gateways answer with a comma-separated string whose first field is 402 on success
+    /// ("402,MsgID = ..."); for SmsMobile confirmed on the test server on 2026-10-12.
     /// </summary>
     public string SuccessCode { get; init; } = "402";
 

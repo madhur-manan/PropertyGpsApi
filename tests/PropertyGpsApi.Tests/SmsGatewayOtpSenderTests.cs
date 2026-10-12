@@ -83,7 +83,7 @@ public class SmsGatewayOtpSenderTests
     [Fact]
     public async Task SmsMobile_sends_the_fields_as_B2A_WEBAPI_builds_them()
     {
-        var (gateway, _) = await Send(SmsOptions.SmsMobile, reply: "Message accepted");
+        var (gateway, _) = await Send(SmsOptions.SmsMobile, reply: "402,MsgID = 1");
 
         Assert.Equal(
             "username=user-1"
@@ -99,21 +99,35 @@ public class SmsGatewayOtpSenderTests
         Assert.Equal("http://sms.example.test/index.php/sendmsg", gateway.Url!.ToString());
     }
 
+    /// <summary>The reply seen on the test server on 2026-10-12 (ids invented).</summary>
+    [Fact]
+    public async Task SmsMobile_a_402_reply_is_sent()
+    {
+        var (_, log) = await Send(SmsOptions.SmsMobile,
+            reply: "402, MsgID = 1508202312345678Mobile_1-BBMPPT,9876543210");
+
+        Assert.Equal(["OTP dispatched to 3210 via the SMS gateway"], log.Lines);
+    }
+
     /// <summary>
-    /// Its success reply is undocumented and B2A_WEBAPI counts any reply as sent, so it is
-    /// accepted - and logged, so its shape can be learned, with no number or code readable.
+    /// B2A_WEBAPI counts any reply as sent, so an officer waits for an SMS that never comes.
+    /// A refusal is an error here, and its reply is logged - with no number or code readable.
     /// </summary>
     [Fact]
-    public async Task SmsMobile_logs_the_reply_with_long_digit_runs_masked()
+    public async Task SmsMobile_any_other_reply_is_a_failure_logged_with_digits_masked()
     {
-        var (_, log) = await Send(SmsOptions.SmsMobile, reply: "402,MsgID = 150820231234 for 9876543210");
+        var gateway = new Gateway(HttpStatusCode.OK, "401, Invalid key for 9876543210");
+        var log = new RecordingLogger();
+        var sender = new SmsGatewayOtpSender(new HttpClient(gateway),
+            Microsoft.Extensions.Options.Options.Create(Options(SmsOptions.SmsMobile)), log);
 
-        var reply = Assert.Single(log.Lines, l => l.StartsWith("SMS gateway replied", StringComparison.Ordinal));
-        Assert.DoesNotContain("9876543210", reply);
-        Assert.DoesNotContain("150820231234", reply);
-        Assert.Contains("402,MsgID", reply);
-        Assert.Contains(log.Lines, l => l.StartsWith("OTP dispatched to 3210", StringComparison.Ordinal));
-        Assert.All(log.Lines, l => Assert.DoesNotContain("123456", l));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sender.SendAsync("9876543210", "123456", CancellationToken.None));
+
+        Assert.Contains("'401'", ex.Message);
+        var line = Assert.Single(log.Lines);
+        Assert.StartsWith("SMS gateway refused the OTP for 3210: 401, Invalid key for ##########", line);
+        Assert.DoesNotContain("123456", line);
     }
 
     [Fact]
