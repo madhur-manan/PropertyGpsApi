@@ -16,6 +16,7 @@ using PropertyGpsApi.Interfaces;
 using PropertyGpsApi.Services;
 using PropertyGpsApi.Models;
 using PropertyGpsApi.Infrastructure.Data;
+using PropertyGpsApi.Infrastructure.Logging;
 using PropertyGpsApi.Infrastructure.Options;
 using PropertyGpsApi.Infrastructure.Security;
 using PropertyGpsApi.Infrastructure.Security.BodyEncryption;
@@ -27,6 +28,10 @@ var builder = WebApplication.CreateBuilder(args);
 // appsettings.json but below environment variables and the command line. See LocalSettings
 // for why it exists and why its position matters.
 LocalSettings.Add(builder.Configuration);
+
+// logs\app-yyyyMMdd.log, written line by line. The IIS module's stdout log holds output back
+// until the site stops, so on a quiet server it shows nothing - see DailyFileLoggerProvider.
+builder.Logging.AddDailyFile(builder.Configuration);
 
 if (!StartupChecks.TryEnsureConfigured(builder, out var configurationError))
 {

@@ -181,4 +181,4 @@ if (-not $healthy) {
 }
 
 Write-Host "`nInstalled. Public address: https://testapps.bbmpgov.in/$Alias" -ForegroundColor Green
-Write-Host "OTPs are written to $AppRoot\logs\stdout_*.log (search for 'OTP for mobile ending')." -ForegroundColor Green
+Write-Host "Log: $AppRoot\logs\app-yyyyMMdd.log, written as things happen (OTPs too, while Otp__Sender is ServerLog)." -ForegroundColor Green
