@@ -118,6 +118,70 @@ public sealed class WardHoldersResponse
     [JsonPropertyName("holders")] public IReadOnlyList<WardSyncHolderDto> Holders { get; init; } = [];
 }
 
+/// <summary>
+/// A survey QC returned (N2): the earlier answers, for any RI of the ward to read, and for
+/// whoever allots it to start from. Read only.
+/// </summary>
+public sealed class ReturnedSurveyRequest
+{
+    [Range(1, int.MaxValue)]
+    [JsonPropertyName("zoneId")]
+    public int ZoneId { get; init; }
+
+    [Range(1, int.MaxValue)]
+    [JsonPropertyName("wardId")]
+    public int WardId { get; init; }
+
+    [Range(1, int.MaxValue)]
+    [JsonPropertyName("appId")]
+    public int AppId { get; init; }
+}
+
+public sealed class ReturnedSurveyResponse
+{
+    [JsonPropertyName("appId")] public int AppId { get; init; }
+    [JsonPropertyName("applicationId")] public string? ApplicationId { get; init; }
+    [JsonPropertyName("qcRemarks")] public string? QcRemarks { get; init; }
+
+    /// <summary>The officer whose survey QC returned.</summary>
+    [JsonPropertyName("submittedBy")] public long? SubmittedBy { get; init; }
+    [JsonPropertyName("submittedOn")] public DateTimeOffset? SubmittedOn { get; init; }
+
+    /// <summary>
+    /// The earlier answers, rebuilt from the survey's own rows (EarlierSurveyReader), with the
+    /// names the phone sends them under. Null when no RI survey is on the server.
+    /// </summary>
+    [JsonPropertyName("survey")] public EarlierSurveyDto? Survey { get; init; }
+}
+
+/// <summary>
+/// A submitted survey's answers, as the phone sent them (the SubmitVerificationRequest names),
+/// without photos, GPS points or the dates of the visit - those are taken again.
+/// </summary>
+public sealed class EarlierSurveyDto
+{
+    [JsonPropertyName("buildingExists")] public int? BuildingExists { get; init; }
+    [JsonPropertyName("propertyLandExists")] public int? PropertyLandExists { get; init; }
+    [JsonPropertyName("isLandUntraceable")] public int? IsLandUntraceable { get; init; }
+    [JsonPropertyName("isLandLocationUpdated")] public int? IsLandLocationUpdated { get; init; }
+    [JsonPropertyName("isGovtProperty")] public int? IsGovtProperty { get; init; }
+    [JsonPropertyName("govtPropertyDetails")] public string? GovtPropertyDetails { get; init; }
+    [JsonPropertyName("khataRecommendation")] public string? KhataRecommendation { get; init; }
+    [JsonPropertyName("khataComments")] public string? KhataComments { get; init; }
+    [JsonPropertyName("remark")] public string? Remark { get; init; }
+
+    /// <summary>Metres, as filed.</summary>
+    [JsonPropertyName("actualRoadWidth")] public double? ActualRoadWidth { get; init; }
+
+    /// <summary>
+    /// Some of the earlier roads could not be tied to the application's declared roads (a
+    /// survey the legacy app filed): those are left out, and the officer answers them again.
+    /// </summary>
+    [JsonPropertyName("roadsIncomplete")] public bool RoadsIncomplete { get; init; }
+
+    [JsonPropertyName("siteDetails")] public SubmitSiteDetails SiteDetails { get; init; } = new();
+}
+
 public sealed class WardSyncHolderDto
 {
     [JsonPropertyName("appId")] public int AppId { get; init; }

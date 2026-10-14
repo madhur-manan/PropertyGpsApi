@@ -54,6 +54,12 @@ public sealed class PropertyDto
     [JsonPropertyName("assignedOn")] public DateTimeOffset? AssignedOn { get; init; }
     [JsonPropertyName("isAssignedToMe")] public bool IsAssignedToMe { get; init; }
     [JsonPropertyName("isAssignedToOther")] public bool IsAssignedToOther { get; init; }
+
+    /// <summary>
+    /// What QC wrote when it returned the survey (App_Status 400): its newest active status
+    /// row. Null for every other status - only the ward sync fills it.
+    /// </summary>
+    [JsonPropertyName("qcRemarks")] public string? QcRemarks { get; init; }
 }
 
 public sealed class SiteDetailsDto

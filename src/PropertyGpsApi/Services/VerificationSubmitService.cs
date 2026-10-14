@@ -98,6 +98,14 @@ internal sealed class VerificationSubmitService(
                     "This application is not on the server. Nothing was saved.",
                     ApiErrorCodes.ApplicationNotFound, recoverable: true);
 
+            // Who may send this survey now (N2). Read under the lock, so a second submit
+            // cannot slip between the check and the write.
+            var state = await connection.QuerySingleAsync<SubmitStateRow>(new CommandDefinition(
+                SubmitStateSql, new { appId = appId.Value }, transaction, 30, CommandType.Text,
+                cancellationToken: ct));
+            RefuseUnlessAccepted(Gate(state, officerId), request.ApplicationId, officerId, state);
+            var returnedFromQc = state.AppStatus == ReturnedFromQcStatus;
+
             // Every road row id must be one of this application's own (defect N3). A row of
             // another application, or a Site_Id sent in its place, used to be filed as given.
             var declared = (await connection.QueryAsync<DeclaredRoadRow>(new CommandDefinition(
@@ -114,6 +122,9 @@ internal sealed class VerificationSubmitService(
                 connection, transaction, sp, request, site, mediaUrls, appId.Value, officerId, roleId, ct);
             await WriteExtrasAsync(connection, transaction, request, mediaUrls, ct);
             await WriteStatusAsync(connection, transaction, sp, request, appId.Value, officerId, roleId, officerMobile, ct);
+            if (returnedFromQc)
+                await SupersedeOtherOfficersAsync(
+                    connection, transaction, request.ApplicationId, appId.Value, officerId, roleId, ct);
             var assignmentClosed = await CompleteAssignmentAsync(
                 connection, transaction, appId.Value, officerId, roleId, ct);
 
@@ -180,6 +191,124 @@ internal sealed class VerificationSubmitService(
 
         return rows > 0;
     }
+
+    // ── Who may submit (N2) ──────────────────────────────────────────────────────────────
+
+    /// <summary>BtoAMainApp.App_Status: waiting for the RI, returned by QC.</summary>
+    internal const int PendingStatus = 10;
+    internal const int ReturnedFromQcStatus = 400;
+
+    internal enum SubmitGate { Accept, NotHolder, SubmittedByOther, Closed }
+
+    internal sealed class SubmitStateRow
+    {
+        public int? AppStatus { get; init; }
+        /// <summary>The officer with a live (pending) holding, if any.</summary>
+        public long? HolderId { get; init; }
+        /// <summary>The officer of the newest active RI status row - the last survey received.</summary>
+        public long? LastRiBy { get; init; }
+        public DateTime? LastRiOn { get; init; }
+        /// <summary>The newest status row of any reviewer (QC, JC, ... - every role but 116/117).</summary>
+        public DateTime? LastReviewOn { get; init; }
+    }
+
+    // Roles: 116 Case Worker and 117 RI submit surveys; 118 is QC (masterDB_prod.dbo.Mst_Roles).
+    internal const string SubmitStateSql = """
+        SELECT AppStatus = m.App_Status,
+               HolderId  = (SELECT TOP (1) a.Arch_Id FROM dbo.BtoA_Architect_AssignedApp a
+                             WHERE a.AppId = m.App_Id AND a.IsActive = 1 AND a.Status = 'Pending'
+                             ORDER BY a.AssignmentDate DESC),
+               LastRiBy  = ri.CBy,
+               LastRiOn  = ri.CDte,
+               LastReviewOn = (SELECT MAX(q.CDte) FROM dbo.BtoA_StatusDetail_Officer q
+                                WHERE q.Ofcr_App_Id = m.App_Id AND q.CRole NOT IN (116, 117))
+        FROM dbo.BtoAMainApp m
+        OUTER APPLY (SELECT TOP (1) s.CBy, s.CDte FROM dbo.BtoA_StatusDetail_Officer s
+                      WHERE s.Ofcr_App_Id = m.App_Id AND s.Status_Active = 1 AND s.CRole IN (116, 117)
+                      ORDER BY s.CDte DESC, s.Ofcr_RowId DESC) ri
+        WHERE m.App_Id = @appId;
+        """;
+
+    /// <summary>
+    /// Waiting (10): as before, anyone it was sent to. Returned by QC (400): only the officer
+    /// who has allotted it since - any RI of the ward may, but must take it first.
+    ///
+    /// Any other status, while no reviewer has written since the last RI survey, is that survey
+    /// waiting for QC: the same officer may send it again - a retry after a lost reply, or an
+    /// edit made meanwhile - and it replaces their earlier send as it always has (D5/D22);
+    /// anyone else is too late. The status itself is not the test - the status procedure sets
+    /// 13 for role 116 but 15 or 12 for role 117 (db/30). Once a reviewer has written, the
+    /// survey is closed to the phone.
+    /// </summary>
+    internal static SubmitGate Gate(SubmitStateRow s, long officerId) => s.AppStatus switch
+    {
+        null or PendingStatus => SubmitGate.Accept,
+        ReturnedFromQcStatus => s.HolderId == officerId ? SubmitGate.Accept : SubmitGate.NotHolder,
+        _ when s.LastRiBy is null || (s.LastReviewOn is { } reviewed && reviewed >= s.LastRiOn) => SubmitGate.Closed,
+        _ => s.LastRiBy == officerId ? SubmitGate.Accept : SubmitGate.SubmittedByOther
+    };
+
+    /// <summary>Not retryable: sending the same survey again cannot change the answer.</summary>
+    private void RefuseUnlessAccepted(SubmitGate gate, string applicationId, long officerId, SubmitStateRow s)
+    {
+        if (gate == SubmitGate.Accept) return;
+        logger.LogWarning(
+            "Verification for {ApplicationId} from officer {OfficerId} refused: {Gate} (App_Status {Status}, holder {Holder})",
+            applicationId, officerId, gate, s.AppStatus, s.HolderId);
+        throw gate switch
+        {
+            SubmitGate.NotHolder => new ApiException(
+                StatusCodes.Status409Conflict, ApiErrorCodes.NotAssignedToYou,
+                "QC returned this application. Allot it to yourself before submitting. Nothing was sent."),
+            SubmitGate.SubmittedByOther => new ApiException(
+                StatusCodes.Status409Conflict, ApiErrorCodes.ApplicationClosed,
+                "Another officer has already submitted this application. Nothing was sent."),
+            _ => new ApiException(
+                StatusCodes.Status409Conflict, ApiErrorCodes.ApplicationClosed,
+                "QC or JC has already acted on this application. Nothing was sent.")
+        };
+    }
+
+    /// <summary>
+    /// A survey QC returned may be corrected by a different RI. The road procedure and
+    /// SupersedeEarlierRowsAsync only replace the submitting officer's own rows, so the first
+    /// officer's roads, road documents and submit row would stay live beside the new ones and
+    /// QC would see two surveys. They are made inactive here - kept, not deleted.
+    ///
+    /// Only RI rows: roles 116/117, and 0 / 1 for what the legacy GPS app filed (its roads as
+    /// CRole 0, its road documents as role 1). QC writes its own road corrections through the
+    /// same procedure (role 118); those are QC's record and are left alone.
+    /// </summary>
+    private static async Task SupersedeOtherOfficersAsync(
+        SqlConnection connection, SqlTransaction transaction, string applicationId, int appId,
+        long officerId, int roleId, CancellationToken ct)
+    {
+        foreach (var sql in new[] { SupersedeOtherRoadsSql, SupersedeOtherDocumentsSql, SupersedeOtherStatusSql })
+            await connection.ExecuteAsync(new CommandDefinition(
+                sql, new { id = applicationId, appId, cby = officerId, crole = roleId },
+                transaction, 30, CommandType.Text, cancellationToken: ct));
+    }
+
+    internal const string SupersedeOtherRoadsSql = """
+        UPDATE dbo.BtoA_SiteRoadDetails_Officer
+           SET isActive = 0, UBy = @cby, UDte = GETDATE(), URole = @crole
+         WHERE Ofcr_ApplicationDisplayId = @id AND CBy <> @cby AND isActive = 1
+           AND ISNULL(CRole, 0) IN (0, 116, 117);
+        """;
+
+    internal const string SupersedeOtherDocumentsSql = """
+        UPDATE dbo.BtoA_DocumentTran
+           SET docTrn_Active = 0, docTrn_UBy = @cby, docTrn_UDte = GETDATE(), docTrn_URole = @crole
+         WHERE docTrn_App_Id = @appId AND docTrn_Mdoc_id = 4 AND UniqueIdentifier = N'444'
+           AND docTrn_CBy <> @cby AND docTrn_Active = 1
+           AND ISNULL(docTrn_CRole, 1) IN (1, 116, 117);
+        """;
+
+    internal const string SupersedeOtherStatusSql = """
+        UPDATE dbo.BtoA_StatusDetail_Officer
+           SET Status_Active = 0, UBy = @cby, UDte = GETDATE(), URole = @crole
+         WHERE Ofcr_App_Id = @appId AND CBy <> @cby AND CRole IN (116, 117) AND Status_Active = 1;
+        """;
 
     // App_Status after a submit is 13, "Data Received from RI", and the status procedure
     // derives that from the role rather than taking it from us. It is not duplicated here:
@@ -738,7 +867,7 @@ internal sealed class VerificationSubmitService(
     /// Ofcr_Aditional is the only free-text column on the application row that nothing else
     /// reads, so the answers with no column of their own are kept here rather than dropped.
     /// </summary>
-    private static string BuildAdditionalInfo(SubmitVerificationRequest r) =>
+    internal static string BuildAdditionalInfo(SubmitVerificationRequest r) =>
         System.Text.Json.JsonSerializer.Serialize(new
         {
             r.IsLandUntraceable,

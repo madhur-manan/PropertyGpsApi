@@ -13,7 +13,8 @@ internal static class PropertyMapper
         IGrouping<int, PropertyRow> group,
         IReadOnlyDictionary<int, AssignmentRow> assignments,
         IReadOnlyDictionary<int, OwnerSummary> owners,
-        long officerId)
+        long officerId,
+        IReadOnlyDictionary<int, string>? qcRemarks = null)
     {
         // One row per road; blank road rows are not roads (see IsBlankRoad).
         var roadRows = group.Where(r => r.Rd_RoadRow_ID is not null && !IsBlankRoad(r)).ToList();
@@ -90,7 +91,8 @@ internal static class PropertyMapper
                 ? new DateTimeOffset(a, TimeSpan.FromHours(5.5))
                 : null,
             IsAssignedToMe = held is not null && held.Arch_Id == officerId,
-            IsAssignedToOther = held is not null && held.Arch_Id != officerId
+            IsAssignedToOther = held is not null && held.Arch_Id != officerId,
+            QcRemarks = qcRemarks is not null && qcRemarks.TryGetValue(group.Key, out var qc) ? qc : null
         };
     }
 

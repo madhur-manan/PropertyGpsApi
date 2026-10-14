@@ -18,4 +18,10 @@ public interface IWardSyncService
     /// Only applications in the requested ward, which must be one of the officer's.
     /// </summary>
     Task<WardHoldersResponse> HoldersAsync(WardHoldersRequest request, long officerId, CancellationToken ct);
+
+    /// <summary>
+    /// The earlier answers of an application QC has returned (App_Status 400), for any officer
+    /// mapped to its ward. Refuses one that is not returned or not in that ward.
+    /// </summary>
+    Task<ReturnedSurveyResponse> ReturnedSurveyAsync(ReturnedSurveyRequest request, long officerId, CancellationToken ct);
 }

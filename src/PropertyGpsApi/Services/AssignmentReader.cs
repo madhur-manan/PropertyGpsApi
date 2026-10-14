@@ -23,8 +23,15 @@ internal sealed class AssignmentReader : IAssignmentReader
         FROM dbo.BtoA_Architect_AssignedApp a WITH (NOLOCK)
         JOIN (SELECT DISTINCT AppId = TRY_CAST(value AS int) FROM STRING_SPLIT(@appIds, ',')) ids
           ON ids.AppId = a.AppId
-        WHERE a.IsActive = 1;
+        WHERE a.IsActive = 1
+          AND NOT (a.Status = 'Completed' AND EXISTS (
+                SELECT 1 FROM dbo.BtoAMainApp m WITH (NOLOCK)
+                 WHERE m.App_Id = a.AppId AND m.App_Status = 400));
         """;
+
+    // The NOT above: QC returned it, so the earlier officer's completed row no longer holds
+    // it - any RI of the ward may take it (N2). ApplicationService.ReleaseReturnedSql retires
+    // that row when someone does.
 
     public async Task<IReadOnlyDictionary<int, AssignmentRow>> ActiveForAsync(
         SqlConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct)

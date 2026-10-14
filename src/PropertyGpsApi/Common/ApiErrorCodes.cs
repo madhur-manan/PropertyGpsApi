@@ -42,6 +42,8 @@ public static class ApiErrorCodes
 
     public const string ApplicationNotFound = "APPLICATION_NOT_FOUND";
     public const string NotAssignedToYou = "NOT_ASSIGNED_TO_YOU";
+    // QC or JC has acted on it, or another officer has already submitted it (N2).
+    public const string ApplicationClosed = "APPLICATION_CLOSED";
     public const string RoadNotRecognised = "ROAD_NOT_RECOGNISED";
     public const string UnknownRoadRow = "UNKNOWN_ROAD_ROW";
     public const string DeclaredRoadNotAnswered = "DECLARED_ROAD_NOT_ANSWERED";

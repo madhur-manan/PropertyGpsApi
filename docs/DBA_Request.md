@@ -107,6 +107,27 @@ re-offer them. `Mst_AppStatus` defines 400, "Returned to RI From QC", but nothin
 The mobile app therefore cannot show an officer work that has come back to them. **This is
 the one genuinely new procedure I would ask for.**
 
+*Update, 13 October 2026 — decided (N2), and now a requirement on the QC portal rather
+than a new procedure.* The API and app are built: a returned survey is shown to **every RI
+of the ward** with QC's reason; any of them may read the earlier answers; whoever allots it
+corrects and resubmits, and the earlier officer's rows are retired. What the QC portal must
+do on **"Return to RI"**, in one transaction:
+
+1. Insert the QC status row: `CRole = 118`, `Status_Id = 12`, `Status_Value = 'RETURN_TO_RI'`,
+   `Status_Remark` = QC's reason (this is what the RI is shown), `Status_Active = 1`.
+2. Set `BtoAMainApp.App_Status = 400`.
+
+**Watch for:** if the portal records the row through `USP_IU_BtoA_StatusDetail_Officer`, that
+procedure turns RETURN_TO_RI into App_Status **16** (its final `else`); the portal must set
+400 *after* calling it, inside the same transaction. Nothing else is needed from the portal:
+the earlier officer's completed assignment is left as it is — the API no longer treats it
+as holding a returned survey, and retires it (`IsActive = 0`, `Remarks = 'Returned by QC'`)
+when another officer allots it.
+
+No new table and no new column: the earlier answers another RI starts from are read back
+from the survey's own rows (`BtoA_MainApp_Officer`, `BtoA_SiteRoadDetails_Officer`,
+`BtoA_StatusDetail_Officer`). Photographs are not passed on: the officer correcting it takes them again.
+
 **D2. Eleven officer answers have no column anywhere.** I currently write them as JSON
 into `Ofcr_Aditional` — recoverable, but not queryable or reportable:
 `isLandUntraceable`, `isLandLocationUpdated`, `isGpsLocationUpdated`, `khataComments`,
@@ -345,7 +366,7 @@ WHERE o.Ofcr_MNo = '<officer mobile number>';
 | B2 | `SCOPE_IDENTITY()` ordering in the road procedure | Wrong id returned today |
 | B3 | Mark OTP consumed | Security |
 | D4 | Least-privilege login | Before go-live |
-| D1 | QC-returns procedure | New requirement |
+| D1 | QC portal sets App_Status 400 + QC remark on "Return to RI" | **Yes** — before QC returns work on live |
 | E1 | e-Khata database names on the new test server | **Yes** — submit on the test server |
 | E2 | Version comparison in `USP_CheckMobileAppVersion` | **Yes** — before the 1.1.0 release |
 | E3 | Blank and inactive road rows; origin of the blank rows | Question — handled in the API meanwhile |

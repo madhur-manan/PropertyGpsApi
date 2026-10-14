@@ -69,4 +69,20 @@ public sealed class WardSyncController(IWardSyncService wardSync) : ControllerBa
             result,
             message: $"{result.Holders.Count(h => h.AssignedToUserId != 0)} of {result.Holders.Count} allotted."));
     }
+
+    /// <summary>
+    /// A survey QC returned: the earlier answers, for any RI of the ward to read before
+    /// allotting it, and to start from after. Writes nothing.
+    /// </summary>
+    [HttpPost("returned-survey")]
+    [ProducesResponseType<ApiResponse<ReturnedSurveyResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<ReturnedSurveyResponse>>> ReturnedSurvey(
+        [FromBody] ReturnedSurveyRequest request, CancellationToken ct)
+    {
+        var result = await wardSync.ReturnedSurveyAsync(request, User.RequireLong(GpsClaims.UserId), ct);
+
+        return Ok(ApiResponse<ReturnedSurveyResponse>.Ok(
+            result,
+            message: result.Survey is null ? "No RI survey of this application is on the server." : "Earlier answers."));
+    }
 }

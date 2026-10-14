@@ -67,6 +67,8 @@ internal sealed class WardSyncService(
         var appIds = grouped.Select(g => g.Key).ToList();
         var assignmentsByApp = await assignments.ActiveForAsync(connection, appIds, ct);
         var ownersByApp = await owners.ForAsync(connection, appIds, ct);
+        var qcByApp = await QcRemarksAsync(
+            connection, grouped.Where(g => g.First().Status == ReturnedFromQc).Select(g => g.Key).ToList(), ct);
 
         // Once per sync, with the closed list: who holds what the phone already has.
         List<WardSyncHolderDto> holders = [];
@@ -89,10 +91,41 @@ internal sealed class WardSyncService(
             ServerCount = summary.ServerCount,
             LocalCount = summary.LocalCount,
             MissingCount = summary.MissingCount,
-            Items = grouped.Select(g => PropertyMapper.Map(g, assignmentsByApp, ownersByApp, officerId)).ToList(),
+            Items = grouped.Select(g => PropertyMapper.Map(g, assignmentsByApp, ownersByApp, officerId, qcByApp)).ToList(),
             Closed = closed.Select(c => new WardSyncClosedDto { AppId = c.AppId, AppStatus = c.AppStatus }).ToList(),
             Holders = holders
         };
+    }
+
+    /// <summary>BtoAMainApp.App_Status when QC has sent the survey back to the RIs (N2).</summary>
+    internal const int ReturnedFromQc = 400;
+
+    /// <summary>masterDB_prod.dbo.Mst_Roles 118, as HistoryService reads it.</summary>
+    internal const int QcRoleId = 118;
+
+    /// <summary>
+    /// What QC said when it returned each application: its newest active QC status row, the
+    /// remark or else the rejection reason. Only QC's own rows - the newest row of any role is
+    /// usually the officer's own note, which must never show under QC's name.
+    /// </summary>
+    internal const string QcRemarksSql = """
+        SELECT AppId = ids.AppId, Remark = q.Remark
+        FROM (SELECT DISTINCT AppId = TRY_CAST(value AS int) FROM STRING_SPLIT(@appIds, ',')) ids
+        CROSS APPLY (SELECT TOP (1) Remark = COALESCE(NULLIF(LTRIM(RTRIM(s.Status_Remark)), N''),
+                                                      NULLIF(LTRIM(RTRIM(s.Status_Rejected_Reason)), N''))
+                     FROM dbo.BtoA_StatusDetail_Officer s WITH (NOLOCK)
+                     WHERE s.Ofcr_App_Id = ids.AppId AND s.Status_Active = 1 AND s.CRole = @qcRole
+                     ORDER BY s.CDte DESC, s.Ofcr_RowId DESC) q
+        WHERE q.Remark IS NOT NULL;
+        """;
+
+    private static async Task<IReadOnlyDictionary<int, string>> QcRemarksAsync(
+        System.Data.Common.DbConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct)
+    {
+        if (appIds.Count == 0) return new Dictionary<int, string>();
+        var rows = await connection.QueryAsync<(int AppId, string Remark)>(new CommandDefinition(
+            QcRemarksSql, new { appIds = ToCsv(appIds), qcRole = QcRoleId }, commandTimeout: 60, cancellationToken: ct));
+        return rows.ToDictionary(r => r.AppId, r => r.Remark);
     }
 
     /// <summary>The applications the phone holds that are still workable here: not reported closed.</summary>
@@ -149,6 +182,7 @@ internal sealed class WardSyncService(
         OUTER APPLY (SELECT TOP (1) a.Arch_Id
                      FROM dbo.BtoA_Architect_AssignedApp a WITH (NOLOCK)
                      WHERE a.AppId = ap.App_Id AND a.IsActive = 1
+                       AND NOT (a.Status = 'Completed' AND ap.App_Status = 400)
                      ORDER BY a.AssignmentDate DESC) h
         WHERE EXISTS (SELECT 1 FROM dbo.BtoA_EPIDMetaData md WITH (NOLOCK)
                       WHERE md.MD_APP_ID = ap.App_Id AND md.MD_MotherEPID = ap.App_MotherEPID
@@ -177,6 +211,65 @@ internal sealed class WardSyncService(
         {
             Holders = rows.Select(r => new WardSyncHolderDto { AppId = r.AppId, AssignedToUserId = r.Arch_Id }).ToList()
         };
+    }
+
+    /// <summary>
+    /// The application, if it is in the requested ward - so a returned survey's answers are
+    /// shown only to officers of its own ward - with its status and QC's remark.
+    /// </summary>
+    internal const string ReturnedAppSql = """
+        SELECT AppId = ap.App_Id, ApplicationId = ap.App_DisplayId, AppStatus = ap.App_Status
+        FROM dbo.BtoAMainApp ap WITH (NOLOCK)
+        WHERE ap.App_Id = @appId AND ap.App_Active = 1
+          AND EXISTS (SELECT 1 FROM dbo.BtoA_EPIDMetaData md WITH (NOLOCK)
+                      WHERE md.MD_APP_ID = ap.App_Id AND md.MD_MotherEPID = ap.App_MotherEPID
+                        AND md.MD_ZoneId = @zoneId AND md.MD_WardId = @wardId);
+        """;
+
+    public async Task<ReturnedSurveyResponse> ReturnedSurveyAsync(
+        ReturnedSurveyRequest request, long officerId, CancellationToken ct)
+    {
+        await RequireMappedWardAsync(officerId, request.ZoneId, request.WardId, ct);
+
+        await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
+        var app = await connection.QuerySingleOrDefaultAsync<ReturnedAppRow>(new CommandDefinition(
+            ReturnedAppSql, new { appId = request.AppId, zoneId = request.ZoneId, wardId = request.WardId },
+            commandTimeout: 30, cancellationToken: ct));
+
+        if (app is null)
+            throw ApiException.Unprocessable(
+                "This application is not in that ward.", ApiErrorCodes.ApplicationNotFound);
+        if (app.AppStatus != ReturnedFromQc)
+            throw new ApiException(
+                StatusCodes.Status409Conflict, ApiErrorCodes.ApplicationClosed,
+                "QC is no longer returning this application. Fetch / Update to see where it stands.");
+
+        // Rebuilt from the survey's own rows - nothing is stored for this (the user's rule).
+        var earlier = await EarlierSurveyReader.ReadAsync(connection, app.AppId, ct);
+        var qc = await QcRemarksAsync(connection, [app.AppId], ct);
+
+        logger.LogInformation(
+            "Returned survey {AppId} read by officer {OfficerId}: earlier survey {Found}",
+            app.AppId, officerId,
+            earlier is { } e ? $"by officer {e.Submission.SubmittedBy}, {e.Survey.SiteDetails.RoadDetails.Count} road(s)" : "not found");
+
+        return new ReturnedSurveyResponse
+        {
+            AppId = app.AppId,
+            ApplicationId = app.ApplicationId,
+            QcRemarks = qc.TryGetValue(app.AppId, out var remark) ? remark : null,
+            SubmittedBy = earlier?.Submission.SubmittedBy,
+            // CDte is the server's local time (IST).
+            SubmittedOn = earlier is { } s ? new DateTimeOffset(s.Submission.SubmittedOn, TimeSpan.FromHours(5.5)) : null,
+            Survey = earlier?.Survey
+        };
+    }
+
+    private sealed class ReturnedAppRow
+    {
+        public int AppId { get; init; }
+        public string? ApplicationId { get; init; }
+        public int? AppStatus { get; init; }
     }
 
     private sealed class HolderRow

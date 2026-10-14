@@ -315,6 +315,18 @@ public class WardSyncTests
             Assert.Equal(ApiErrorCodes.OutsideJurisdiction, refused.Code);
         }
 
+        /// <summary>Every RI of the ward may read a returned survey (N2) - and only of that ward.</summary>
+        [Fact]
+        public async Task A_returned_survey_outside_the_officers_wards_is_refused_before_any_query()
+        {
+            var refused = await Assert.ThrowsAsync<ApiException>(
+                () => Service(Hoodi).ReturnedSurveyAsync(
+                    new ReturnedSurveyRequest { ZoneId = 109, WardId = 112, AppId = 113 }, 11320, default));
+
+            Assert.Equal(403, refused.StatusCode);
+            Assert.Equal(ApiErrorCodes.OutsideJurisdiction, refused.Code);
+        }
+
         [Fact]
         public async Task An_officer_mapped_to_no_ward_may_sync_nothing()
         {
