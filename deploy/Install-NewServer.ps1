@@ -27,7 +27,10 @@ param(
     [string] $MediaRoot = 'D:\PropertyGpsMedia',
     [string] $SiteName  = 'Default Web Site',
     [string] $Alias     = 'propertygps',
-    [string] $PoolName  = 'propertyGPSAPI'
+    [string] $PoolName  = 'propertyGPSAPI',
+    # Install without the IIS WebSocket Protocol feature. Phones then see other RIs' allotments
+    # only when they pull the list down, as before the live updates.
+    [switch] $WithoutLiveUpdates
 )
 $ErrorActionPreference = 'Stop'
 if (-not $Source) { $Source = Join-Path $PSScriptRoot 'app' }
@@ -48,6 +51,15 @@ if (-not (Get-WebGlobalModule | Where-Object Name -eq 'AspNetCoreModuleV2')) {
     Fail 'AspNetCoreModuleV2 is not registered. Install the ASP.NET Core 10 Hosting Bundle, run iisreset, then re-run.'
 }
 Ok 'AspNetCoreModuleV2 registered'
+
+# The ward live socket (allotments pushed to the other phones of a ward) needs IIS's WebSocket
+# Protocol feature. Installing it does not change the other sites on the server.
+$ws = if (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue) { Get-WindowsFeature -Name Web-WebSockets -ErrorAction SilentlyContinue }
+if ($ws -and $ws.Installed) { Ok 'IIS WebSocket Protocol installed' }
+elseif ($WithoutLiveUpdates) { Write-Host '  note  IIS WebSocket Protocol not installed - installing without live allotment updates' -ForegroundColor Yellow }
+else {
+    Fail "IIS WebSocket Protocol is not installed. Run:  Install-WindowsFeature Web-WebSockets   then re-run this script (or re-run with -WithoutLiveUpdates to install without live allotment updates)."
+}
 
 # Both frameworks are needed: Microsoft.AspNetCore.App runs on top of Microsoft.NETCore.App,
 # and a server can end up with the first and not the second (seen on NEW-KHATA-TEST, where
@@ -89,7 +101,12 @@ $poolPath = "IIS:\AppPools\$PoolName"
 if (Test-Path $poolPath) {
     if ((Get-WebAppPoolState -Name $PoolName).Value -ne 'Stopped') {
         Stop-WebAppPool -Name $PoolName
-        for ($i = 0; $i -lt 30 -and (Get-WebAppPoolState -Name $PoolName).Value -ne 'Stopped'; $i++) { Start-Sleep -Seconds 1 }
+        # The live sockets are closed as the pool stops; 90 s is IIS's own limit before it
+        # kills the worker.
+        for ($i = 0; $i -lt 90 -and (Get-WebAppPoolState -Name $PoolName).Value -ne 'Stopped'; $i++) { Start-Sleep -Seconds 1 }
+        if ((Get-WebAppPoolState -Name $PoolName).Value -ne 'Stopped') {
+            Fail "App pool $PoolName did not stop within 90 s; its files are still in use. Nothing was copied - run this again."
+        }
     }
     Ok "existing pool $PoolName stopped for the update"
 }
@@ -97,7 +114,9 @@ foreach ($d in $AppRoot, (Join-Path $AppRoot 'logs'), $MediaRoot) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null }
 }
 # /E copies everything; /XD logs leaves the log folder alone; no /MIR, so nothing is deleted.
-robocopy $Source $AppRoot /E /XD logs /NFL /NDL /NJH /NJS /NP | Out-Null
+# /R:5 /W:5: a file still locked fails here in half a minute, not after robocopy's own
+# default of a million retries.
+robocopy $Source $AppRoot /E /XD logs /R:5 /W:5 /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { Fail "robocopy failed with code $LASTEXITCODE." }
 Ok "files copied to $AppRoot"
 

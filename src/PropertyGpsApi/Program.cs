@@ -12,6 +12,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using PropertyGpsApi;
 using PropertyGpsApi.Common;
+using PropertyGpsApi.Endpoints;
 using PropertyGpsApi.Interfaces;
 using PropertyGpsApi.Services;
 using PropertyGpsApi.Models;
@@ -107,6 +108,7 @@ builder.Services.AddScoped<ISubmitMediaService, SubmitMediaService>();
 builder.Services.AddScoped<IMediaAccessService, MediaAccessService>();
 builder.Services.AddScoped<IHistoryService, HistoryService>();
 builder.Services.AddScoped<IAppVersionService, AppVersionService>();
+builder.Services.AddSingleton<IWardLiveHub, WardLiveHub>();
 
 // The OTP sender seam. DevelopmentOtpSender writes the code to the log, which is the whole
 // point of it, and exactly why selecting it outside Development must fail the process
@@ -392,7 +394,12 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// The ward live socket (WardLiveEndpoint): pings keep it open through NAT and mobile networks
+// that drop a silent connection.
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
+
 app.MapControllers();
+app.MapWardLive();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

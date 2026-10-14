@@ -14,6 +14,7 @@ namespace PropertyGpsApi.Services;
 internal sealed class ApplicationService(
     ISqlConnectionFactory connections,
     IOptions<StoredProcedureOptions> procedures,
+    IWardLiveHub live,
     ILogger<ApplicationService> logger) : IApplicationService
 {
     public async Task<AssignOutcome> AssignAsync(
@@ -52,7 +53,57 @@ internal sealed class ApplicationService(
             "Assign appId={AppId} officer={OfficerId} assign={Assign} -> {StatusCode} {Message}",
             appId, officerId, assign, row.StatusCode, row.Message);
 
-        return new AssignOutcome(row.StatusCode, row.Assign_Id, row.App_id, row.Message);
+        var outcome = new AssignOutcome(row.StatusCode, row.Assign_Id, row.App_id, row.Message);
+        if (outcome.Succeeded)
+            // Not the request token: a phone that hangs up now must not turn a done allot into an error.
+            await PublishHolderAsync(connection, appId);
+        return outcome;
+    }
+
+    /// <summary>
+    /// Tells the phones that have the application's ward open who holds it now (WardLiveHub).
+    /// The holder is read back rather than assumed, so the push is right in every case - a
+    /// QC-returned release included. Sent without waiting: the officer's own answer is never
+    /// held up by other phones, and nothing here can fail the allot, which is already done.
+    /// </summary>
+    private async Task PublishHolderAsync(System.Data.Common.DbConnection connection, int appId)
+    {
+        try
+        {
+            var now = await connection.QueryFirstOrDefaultAsync<AppHolderRow>(new CommandDefinition(
+                AppHolderSql, new { appId }, commandTimeout: 10));
+            if (now is null) return;
+            _ = live.PublishAsync(now.ZoneId, now.WardId,
+                [new WardSyncHolderDto { AppId = appId, AssignedToUserId = now.Holder }]);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Assign appId={AppId}: could not tell the ward's phones", appId);
+        }
+    }
+
+    /// <summary>
+    /// The application's ward, and who holds it now: the newest active row, not counting the
+    /// earlier officer's completed row while QC has it returned - the rule of
+    /// WardSyncService.HoldersSql. 0 when free.
+    /// </summary>
+    internal const string AppHolderSql = """
+        SELECT TOP (1) ZoneId = md.MD_ZoneId, WardId = md.MD_WardId, Holder = ISNULL(h.Arch_Id, 0)
+        FROM dbo.BtoAMainApp ap
+        JOIN dbo.BtoA_EPIDMetaData md ON md.MD_APP_ID = ap.App_Id AND md.MD_MotherEPID = ap.App_MotherEPID
+        OUTER APPLY (SELECT TOP (1) a.Arch_Id
+                     FROM dbo.BtoA_Architect_AssignedApp a
+                     WHERE a.AppId = ap.App_Id AND a.IsActive = 1
+                       AND NOT (a.Status = 'Completed' AND ap.App_Status = 400)
+                     ORDER BY a.AssignmentDate DESC) h
+        WHERE ap.App_Id = @appId;
+        """;
+
+    private sealed class AppHolderRow
+    {
+        public int ZoneId { get; init; }
+        public int WardId { get; init; }
+        public int Holder { get; init; }
     }
 
     /// <summary>
