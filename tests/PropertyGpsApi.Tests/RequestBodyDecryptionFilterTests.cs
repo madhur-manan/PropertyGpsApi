@@ -20,7 +20,7 @@ namespace PropertyGpsApi.Tests;
 public class RequestBodyDecryptionFilterTests
 {
     private const string WardSyncJson =
-        """{"corporationId":1,"zoneId":102,"wardId":54,"localCount":3,"knownAppIds":[101,102,103],"batchSize":100}""";
+        """{"ulbCode":1,"wardNumber":"54","localCount":3,"knownAppIds":[101,102,103],"batchSize":100}""";
 
     /// <summary>Distinctive enough that finding it anywhere in a log is proof of a leak.</summary>
     private const string SecretPlaintext =

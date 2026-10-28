@@ -17,46 +17,61 @@ namespace PropertyGpsApi.Services;
 /// It is called by the services rather than being one, so the rules can be read
 /// in one place and unit-tested without a database or an HTTP context.
 ///
-/// The officer's own ward and zone are passed in, never read from claims here —
-/// only the controller can see a token, and a service that reached for
-/// HttpContext would be untestable.
+/// A ward is a ULB code plus a ward number (text) - Property GPS no longer knows zones,
+/// corporations or divisions. The officer's wards are passed in, never read here: for a
+/// ward officer they are every ward mapped to them (IOfficerService.MappedWardsAsync), not
+/// the token's single ward, which refused a two-ward officer their second.
 /// </summary>
 internal static class JurisdictionRules
 {
-    /// <summary>Ward-level officer. Scoped to a single ward.</summary>
-    internal const int WardOfficer = 116;
-
-    /// <summary>Zone-level officer. Legitimately has no ward claim at all.</summary>
-    internal const int ZoneOfficer = 125;
+    /// <summary>
+    /// Revenue Inspector (RI): the only role Property GPS signs in, limited to the wards mapped
+    /// to them. 116 (Case Worker) is not a Property GPS role on UDD and is never ward-scoped.
+    /// </summary>
+    internal const int RevenueInspector = 117;
 
     /// <summary>
-    /// A ward officer may only act on their own ward. Without this the token
-    /// authenticates but authorises nothing, and any officer could page through
-    /// every ward in the city by changing three numbers in the request body.
+    /// Above ward level (once the zone officer). Zones are gone, so the officer's own ULB
+    /// (the token's ulb claim) is what limits them, and only when they have one.
+    /// </summary>
+    internal const int ZoneOfficer = 125;
+
+    /// <summary>117, the RI: the field officer whose work is ward by ward.</summary>
+    internal static bool IsWardScoped(int roleId) => roleId == RevenueInspector;
+
+    /// <summary>Whether one of these wards is this ULB + ward number (WardNumbers.Same).</summary>
+    internal static bool Covers(IEnumerable<Jurisdiction>? wards, int? ulbCode, string? wardNumber) =>
+        ulbCode is > 0 && wards is not null
+        && wards.Any(w => w.UlbCode == ulbCode && WardNumbers.Same(w.WardNumber, wardNumber));
+
+    /// <summary>
+    /// A ward officer may only act on a ward mapped to them - any of them. Without this the
+    /// token authenticates but authorises nothing, and any officer could page through every
+    /// ward in the city by changing two values in the request body.
     ///
-    /// An officer with no ward claim is not blocked: role 116 should always
-    /// carry one, and refusing on its absence would lock out a correctly
-    /// configured officer over a data problem in the master tables.
+    /// A ward officer mapped to no ward at all may act on none: the ward sync refuses them
+    /// the same way, so they cannot have been sent an application to act on. Other roles
+    /// are not limited here.
     /// </summary>
     public static void RequireOwnWard(
-        int roleId, long? officerWardId, int targetWardId, string message)
+        int roleId, IReadOnlyCollection<Jurisdiction>? officerWards, int? ulbCode, string? wardNumber,
+        string message)
     {
-        if (roleId != WardOfficer) return;
-        if (officerWardId is null || officerWardId == targetWardId) return;
+        if (!IsWardScoped(roleId)) return;
+        if (Covers(officerWards, ulbCode, wardNumber)) return;
 
         throw ApiException.Forbidden(message, ApiErrorCodes.OutsideJurisdiction);
     }
 
     /// <summary>
-    /// Whether this officer may read a document belonging to the given
-    /// zone/ward. Any role not listed is refused outright rather than
-    /// defaulting to allowed.
+    /// Whether this officer may read a document belonging to the given ULB/ward. Any role
+    /// not listed is refused outright rather than defaulting to allowed.
     /// </summary>
     public static bool MayViewMedia(
-        int roleId, long? officerWardId, long? officerZoneId, MediaScope scope) => roleId switch
+        int roleId, IReadOnlyCollection<Jurisdiction>? officerWards, long? officerUlbCode, MediaScope scope) => roleId switch
     {
-        WardOfficer => officerWardId is not { } ward || ward == scope.WardId,
-        ZoneOfficer => officerZoneId is not { } zone || zone == scope.ZoneId,
+        RevenueInspector => Covers(officerWards, scope.UlbCode, scope.WardNumber),
+        ZoneOfficer => officerUlbCode is not { } ulb || ulb == scope.UlbCode,
         _ => false
     };
 }

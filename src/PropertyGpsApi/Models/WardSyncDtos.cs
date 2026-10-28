@@ -12,17 +12,20 @@ namespace PropertyGpsApi.Models;
 /// </summary>
 public sealed class WardSyncRequest
 {
+    /// <summary>The ward is named by its ULB code and ward number (BtoA_EPIDMetaData.MD_ULBCode + MD_WardId).</summary>
     [Range(1, int.MaxValue)]
-    [JsonPropertyName("corporationId")]
-    public int CorporationId { get; init; }
+    [JsonPropertyName("ulbCode")]
+    public int UlbCode { get; init; }
 
-    [Range(1, int.MaxValue)]
-    [JsonPropertyName("zoneId")]
-    public int ZoneId { get; init; }
+    /// <summary>Text, 1 to 20 characters once trimmed.</summary>
+    [WardNumber]
+    [JsonPropertyName("wardNumber")]
+    public string WardNumber { get; init; } = "";
 
-    [Range(1, int.MaxValue)]
-    [JsonPropertyName("wardId")]
-    public int WardId { get; init; }
+    // Older builds sent these. Accepted and ignored: Property GPS works by ULB + ward number.
+    [JsonPropertyName("corporationId")] public int? CorporationId { get; init; }
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
 
     /// <summary>How many applications the phone holds for this ward. Logged beside the server's count.</summary>
     [Range(0, WardSyncLimits.MaxHeld)]
@@ -63,6 +66,14 @@ public sealed class WardSyncRequest
     /// </summary>
     [JsonPropertyName("includeClosed")]
     public bool IncludeClosed { get; init; }
+
+    /// <summary>
+    /// True (the default, what app 1.2.0 gets by not sending it): only the newest workable
+    /// application per EPID, because those phones keep one record per EPID. App 1.3.0 keeps one
+    /// record per App_Id and sends false: every workable application (needs db/44).
+    /// </summary>
+    [JsonPropertyName("onePerEpid")]
+    public bool OnePerEpid { get; init; } = true;
 }
 
 public sealed class WardSyncResponse
@@ -73,6 +84,19 @@ public sealed class WardSyncResponse
     /// <summary>The phone's count, echoed.</summary>
     [JsonPropertyName("localCount")] public int LocalCount { get; init; }
 
+    /// <summary>
+    /// Survey__MinMixedExtentPercent: each extent of a Mixed plot must be at least this share
+    /// of the site, in percent. Sent with every sync so the phone follows a change on the
+    /// server without a new build. Set by the controller from SurveyOptions.
+    /// </summary>
+    [JsonPropertyName("minMixedExtentPercent")] public double MinMixedExtentPercent { get; set; }
+
+    /// <summary>Survey:MaxCompletedOffline - completed surveys that may wait on the phone for a sync.</summary>
+    [JsonPropertyName("maxCompletedOffline")] public int MaxCompletedOffline { get; set; }
+
+    /// <summary>Survey:MaxAllottedPerOfficer - applications one RI may hold at once.</summary>
+    [JsonPropertyName("maxAllottedPerOfficer")] public int MaxAllottedPerOfficer { get; set; }
+
     /// <summary>How many the phone lacks before this batch is applied.</summary>
     [JsonPropertyName("missingCount")] public int MissingCount { get; init; }
 
@@ -82,6 +106,120 @@ public sealed class WardSyncResponse
 
     /// <summary>Held applications that are no longer workable here. Empty unless asked for.</summary>
     [JsonPropertyName("closed")] public IReadOnlyList<WardSyncClosedDto> Closed { get; init; } = [];
+
+    /// <summary>
+    /// Who holds each application the phone already has and that is still workable, 0 for
+    /// nobody - sent with <see cref="Closed"/>, once per sync. An application is downloaded
+    /// once, so without this an allotment or a release made on another phone never reached
+    /// this one: a released record stayed "allotted to another officer" here for good.
+    /// </summary>
+    [JsonPropertyName("holders")] public IReadOnlyList<WardSyncHolderDto> Holders { get; init; } = [];
+}
+
+/// <summary>
+/// The pull-down on the property list: who holds each of these applications now. Nothing
+/// is downloaded - an allotment or a release made on another phone is all it learns.
+/// </summary>
+public sealed class WardHoldersRequest
+{
+    [Range(1, int.MaxValue)]
+    [JsonPropertyName("ulbCode")]
+    public int UlbCode { get; init; }
+
+    [WardNumber]
+    [JsonPropertyName("wardNumber")]
+    public string WardNumber { get; init; } = "";
+
+    // Older builds sent these. Accepted and ignored.
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
+
+    /// <summary>The App_Ids the phone holds for this ward.</summary>
+    [MaxLength(WardSyncLimits.MaxHeld, ErrorMessage = "Too many application ids in one request.")]
+    [JsonPropertyName("appIds")]
+    public IReadOnlyList<int> AppIds { get; init; } = [];
+}
+
+public sealed class WardHoldersResponse
+{
+    /// <summary>One entry per asked-for application that is in the ward; 0 when it is free.</summary>
+    [JsonPropertyName("holders")] public IReadOnlyList<WardSyncHolderDto> Holders { get; init; } = [];
+}
+
+/// <summary>
+/// A survey QC returned (N2): the earlier answers, for any RI of the ward to read, and for
+/// whoever allots it to start from. Read only.
+/// </summary>
+public sealed class ReturnedSurveyRequest
+{
+    [Range(1, int.MaxValue)]
+    [JsonPropertyName("ulbCode")]
+    public int UlbCode { get; init; }
+
+    [WardNumber]
+    [JsonPropertyName("wardNumber")]
+    public string WardNumber { get; init; } = "";
+
+    // Older builds sent these. Accepted and ignored.
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
+
+    [Range(1, int.MaxValue)]
+    [JsonPropertyName("appId")]
+    public int AppId { get; init; }
+}
+
+public sealed class ReturnedSurveyResponse
+{
+    [JsonPropertyName("appId")] public int AppId { get; init; }
+    [JsonPropertyName("applicationId")] public string? ApplicationId { get; init; }
+    [JsonPropertyName("qcRemarks")] public string? QcRemarks { get; init; }
+
+    /// <summary>The officer whose survey QC returned.</summary>
+    [JsonPropertyName("submittedBy")] public long? SubmittedBy { get; init; }
+    [JsonPropertyName("submittedOn")] public DateTimeOffset? SubmittedOn { get; init; }
+
+    /// <summary>
+    /// The earlier answers, rebuilt from the survey's own rows (EarlierSurveyReader), with the
+    /// names the phone sends them under. Null when no RI survey is on the server.
+    /// </summary>
+    [JsonPropertyName("survey")] public EarlierSurveyDto? Survey { get; init; }
+}
+
+/// <summary>
+/// A submitted survey's answers, as the phone sent them (the SubmitVerificationRequest names),
+/// without photos, GPS points or the dates of the visit - those are taken again.
+/// </summary>
+public sealed class EarlierSurveyDto
+{
+    [JsonPropertyName("buildingExists")] public int? BuildingExists { get; init; }
+    [JsonPropertyName("propertyLandExists")] public int? PropertyLandExists { get; init; }
+    [JsonPropertyName("isLandUntraceable")] public int? IsLandUntraceable { get; init; }
+    [JsonPropertyName("isLandLocationUpdated")] public int? IsLandLocationUpdated { get; init; }
+    [JsonPropertyName("isGovtProperty")] public int? IsGovtProperty { get; init; }
+    [JsonPropertyName("govtPropertyDetails")] public string? GovtPropertyDetails { get; init; }
+    [JsonPropertyName("khataRecommendation")] public string? KhataRecommendation { get; init; }
+    [JsonPropertyName("khataComments")] public string? KhataComments { get; init; }
+    [JsonPropertyName("remark")] public string? Remark { get; init; }
+
+    /// <summary>Metres, as filed.</summary>
+    [JsonPropertyName("actualRoadWidth")] public double? ActualRoadWidth { get; init; }
+
+    /// <summary>
+    /// Some of the earlier roads could not be tied to the application's declared roads (a
+    /// survey the legacy app filed): those are left out, and the officer answers them again.
+    /// </summary>
+    [JsonPropertyName("roadsIncomplete")] public bool RoadsIncomplete { get; init; }
+
+    [JsonPropertyName("siteDetails")] public SubmitSiteDetails SiteDetails { get; init; } = new();
+}
+
+public sealed class WardSyncHolderDto
+{
+    [JsonPropertyName("appId")] public int AppId { get; init; }
+
+    /// <summary>The officer holding it now; 0 when it is free.</summary>
+    [JsonPropertyName("assignedToUserId")] public int AssignedToUserId { get; init; }
 }
 
 public sealed class WardSyncClosedDto
@@ -96,12 +234,16 @@ public sealed class WardSyncClosedDto
 public sealed class WardSyncAckRequest
 {
     [Range(1, int.MaxValue)]
-    [JsonPropertyName("zoneId")]
-    public int ZoneId { get; init; }
+    [JsonPropertyName("ulbCode")]
+    public int UlbCode { get; init; }
 
-    [Range(1, int.MaxValue)]
-    [JsonPropertyName("wardId")]
-    public int WardId { get; init; }
+    [WardNumber]
+    [JsonPropertyName("wardNumber")]
+    public string WardNumber { get; init; } = "";
+
+    // Older builds sent these. Accepted and ignored.
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
 
     [Required]
     [MinLength(1, ErrorMessage = "Acknowledge at least one application.")]

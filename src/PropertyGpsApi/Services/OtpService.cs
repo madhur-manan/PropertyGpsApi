@@ -10,12 +10,14 @@ using PropertyGpsApi.Interfaces;
 namespace PropertyGpsApi.Services;
 
 
-internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJwtTokenService tokens,IOptions<OtpOptions> options, ILogger<OtpService> logger) : IOtpService
+internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJwtTokenService tokens,IOfficerSessionStore sessions,IOptions<OtpOptions> options,IOptions<AuthOptions> auth, ILogger<OtpService> logger) : IOtpService
 {
     public async Task<SendOtpResponse> SendAsync(SendOtpRequest request, CancellationToken ct)
     {
         var otpOptions = options.Value;
-        var roleId = request.RoleId ?? otpOptions.DefaultRoleId;
+        // Always the RI role (117): the app signs nobody else in, so a roleId in the request
+        // cannot ask the officer check about another role.
+        var roleId = otpOptions.DefaultRoleId;
 
         // Check the officer exists and is active BEFORE generating anything. Without this we
         // happily store a code for any number that arrives, which wastes an SMS on a typo and
@@ -81,7 +83,48 @@ internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJw
         }
 
         var officer = result.Officer!;
-        var (token, expiresAt) = tokens.Issue(officer);
+
+        // One phone per officer: each officer is bound to the phone they first sign in on,
+        // and every other phone is refused until an administrator moves them. The session
+        // is written before the token exists: a token the table does not know would be
+        // refused on its first request anyway, so a failure here fails the sign-in
+        // (retryable) rather than handing one out.
+        var sessionId = Guid.NewGuid();
+        var enforce = auth.Value.SingleDeviceSessions;
+        var deviceId = OfficerSessionStore.CleanDeviceId(request.DeviceId);
+
+        // Builds before 1.1.0 send no phone id, only the shared constant the OTP procedures
+        // pair on - every such phone would look like the same one. They are told to update.
+        if (enforce && (deviceId is null || string.Equals(deviceId, options.Value.Source, StringComparison.OrdinalIgnoreCase)))
+            throw ApiException.Unprocessable(
+                "Please install the latest version of the app to sign in.",
+                ApiErrorCodes.DeviceUnknown, recoverable: true);
+
+        bool started;
+        try
+        {
+            started = await sessions.TryStartAsync(officer.OfficerId, sessionId, deviceId, clientIp, enforce, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Could not start a session for officer {OfficerId}", officer.OfficerId);
+            // With the one-phone check switched off nothing reads the session, so its
+            // absence (say, the table not yet created on this server) must not block sign-in.
+            if (enforce)
+                throw ApiException.Upstream("Could not sign you in right now. Please try again.");
+            started = true;
+        }
+
+        if (!started)
+        {
+            logger.LogInformation("Sign-in refused for officer {OfficerId}: bound to another phone",
+                officer.OfficerId);
+            throw ApiException.Unprocessable(
+                "This account is registered to another device. ",
+                ApiErrorCodes.SignedInElsewhere, recoverable: true);
+        }
+
+        var (token, expiresAt) = tokens.Issue(officer, sessionId);
 
         // Audit the login the same way every other BBMP app does. A failure here must not
         // cost the officer their session - they have already authenticated.
@@ -95,31 +138,9 @@ internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJw
                 officer.OfficerId);
         }
 
-        return new VerifyOtpResponse
-        {
-            Token = token,
-            ExpiresAt = expiresAt,
-            UserId = officer.OfficerId,
-            RoleId = officer.RoleId,
-            Mobile = officer.Mobile,
-            UserName = officer.Name,
-            Designation = officer.RoleName,
-            CorporationId = officer.CorporationId,
-            CorporationName = officer.CorporationName,
-            ZoneId = officer.ZoneId,
-            WardId = officer.WardId,
-            Jurisdictions = officer.Jurisdictions.Select(j => new JurisdictionDto
-            {
-                GbaZoneId = j.GbaZoneId,
-                GbaZoneName = j.GbaZoneName,
-                ZoneId = j.ZoneId,
-                ZoneName = j.ZoneName,
-                WardId = j.WardId,
-                WardName = j.WardName,
-                CorporationId = j.CorporationId,
-                CorporationName = j.CorporationName
-            }).ToList()
-        };
+        // The same shape auth/me answers with: the officer's ULBs and wards, the first one
+        // (the token's) also at the top.
+        return OfficerService.ToResponse(officer, token, expiresAt);
     }
 
     /// <summary>

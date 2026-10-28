@@ -29,6 +29,14 @@ public sealed class PropertyDto
     [JsonPropertyName("processingFeePaid")] public int? ProcessingFeePaid { get; init; }
     [JsonPropertyName("processingFee")] public decimal? ProcessingFee { get; init; }
 
+    // The application's ULB and ward (MD_ULBCode, MD_WardId), named from mst_AROMapping.
+    // Filled by the ward sync; the old fetch's procedure does not return them.
+    [JsonPropertyName("ulbCode")] public int? UlbCode { get; init; }
+    [JsonPropertyName("ulbName")] public string? UlbName { get; init; }
+    [JsonPropertyName("wardNumber")] public string? WardNumber { get; init; }
+    [JsonPropertyName("wardName")] public string? WardName { get; init; }
+
+    // Only the old fetch fills these (USP_S_GetAppDetails); null for ward-sync rows.
     [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
     [JsonPropertyName("zoneName")] public string? ZoneName { get; init; }
     [JsonPropertyName("wardId")] public int? WardId { get; init; }
@@ -54,12 +62,20 @@ public sealed class PropertyDto
     [JsonPropertyName("assignedOn")] public DateTimeOffset? AssignedOn { get; init; }
     [JsonPropertyName("isAssignedToMe")] public bool IsAssignedToMe { get; init; }
     [JsonPropertyName("isAssignedToOther")] public bool IsAssignedToOther { get; init; }
+
+    /// <summary>
+    /// What QC wrote when it returned the survey (App_Status 400): its newest active status
+    /// row. Null for every other status - only the ward sync fills it.
+    /// </summary>
+    [JsonPropertyName("qcRemarks")] public string? QcRemarks { get; init; }
 }
 
 public sealed class SiteDetailsDto
 {
     [JsonPropertyName("siteId")] public int? SiteId { get; init; }
-    [JsonPropertyName("streetId")] public int? StreetId { get; init; }
+
+    /// <summary>The site's street, as text: Site_StreetId as the ward sync returns it (StreetNumber).</summary>
+    [JsonPropertyName("streetId")] public string? StreetId { get; init; }
     [JsonPropertyName("roadType")] public string? RoadType { get; init; }
     [JsonPropertyName("roadId")] public string? RoadId { get; init; }
     [JsonPropertyName("roadName")] public string? RoadName { get; init; }
@@ -126,7 +142,11 @@ public sealed class RoadDto
     [JsonPropertyName("privateRoadText")] public string? PrivateRoadText { get; init; }
 }
 
-/// <summary>One raw row of USP_S_GetAppDetails. Column names match its aliases exactly.</summary>
+/// <summary>
+/// One raw row of USP_S_GetAppDetails or USP_S_GpsWardSync. Column names match their aliases
+/// exactly. The ward sync returns UlbCode / UlbName / WardNumber / WardName / StreetNumber and
+/// no longer ZoneId / WardId / GBAZoneName_En; the old fetch the reverse.
+/// </summary>
 internal sealed class PropertyRow
 {
     public int AppID { get; init; }
@@ -143,6 +163,16 @@ internal sealed class PropertyRow
     public int? Site_Id { get; init; }
     public int? ApplicationId { get; init; }
     public string? EpID { get; init; }
+
+    // USP_S_GpsWardSync: md.MD_ULBCode, the trimmed MD_WardId text, their names, and
+    // Site_StreetId as text.
+    public int? UlbCode { get; init; }
+    public string? UlbName { get; init; }
+    public string? WardNumber { get; init; }
+    public string? WardName { get; init; }
+    public string? StreetNumber { get; init; }
+
+    // USP_S_GetAppDetails (the old fetch) only.
     public int? WardId { get; init; }
     public int? ZoneId { get; init; }
     public string? GBAZoneName_En { get; init; }

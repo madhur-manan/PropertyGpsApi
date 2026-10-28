@@ -24,13 +24,9 @@ namespace PropertyGpsApi.Services;
 /// the arithmetic is wrong at the tens - 1.10 ranks BELOW 1.9. The app therefore sends
 /// MAJOR.MINOR and does its own comparison as well.
 /// </summary>
-internal sealed class AppVersionService(
-    ISqlConnectionFactory connections,
-    IOptions<StoredProcedureOptions> procedures,
-    ILogger<AppVersionService> logger) : IAppVersionService
+internal sealed class AppVersionService(ISqlConnectionFactory connections,IOptions<StoredProcedureOptions> procedures,ILogger<AppVersionService> logger) : IAppVersionService
 {
-    public async Task<VersionCheckResponse> CheckAsync(
-        VersionCheckRequest request, long officerId, int roleId, CancellationToken ct)
+    public async Task<VersionCheckResponse> CheckAsync(VersionCheckRequest request, long officerId, int roleId, CancellationToken ct)
     {
         var p = new DynamicParameters();
         p.Add("@App_Platform", request.Platform, DbType.String, size: 50);
@@ -41,8 +37,7 @@ internal sealed class AppVersionService(
 
         await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
 
-        var row = await connection.QueryFirstOrDefaultAsync<VersionRow>(
-            Sp.Call(procedures.Value.CheckAppVersion, p, ct));
+        var row = await connection.QueryFirstOrDefaultAsync<VersionRow>(Sp.Call(procedures.Value.CheckAppVersion, p, ct));
 
         if (row is null)
         {
@@ -50,14 +45,8 @@ internal sealed class AppVersionService(
                 request.Platform, request.Version);
             return new VersionCheckResponse { Status = "ERROR", Message = "No answer from the version service." };
         }
-
-        // ERROR and WARNING are the procedure's own words for "I could not answer". They are
-        // reported as-is rather than turned into a failed request: a version check that
-        // cannot complete must never stand between an officer and their work.
         if (row.Status is "ERROR" or "WARNING")
-            logger.LogWarning(
-                "Version check for {Platform} {Version} returned {Status}: {Message}",
-                request.Platform, request.Version, row.Status, row.Message);
+            logger.LogWarning("Version check for {Platform} {Version} returned {Status}: {Message}",request.Platform, request.Version, row.Status, row.Message);
 
         return new VersionCheckResponse
         {

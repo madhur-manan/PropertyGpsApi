@@ -17,7 +17,7 @@ public sealed class SendOtpRequest
 
     /// <summary>
     /// Officer role. USP_S_ValidateOfficer matches on role as well as mobile, so a wrong
-    /// value reads as "not registered". Defaults to Otp:DefaultRoleId (116, the ward RI).
+    /// value reads as "not registered". Defaults to Otp:DefaultRoleId (117, the RI).
     /// </summary>
     [JsonPropertyName("roleId")]
     public int? RoleId { get; init; }

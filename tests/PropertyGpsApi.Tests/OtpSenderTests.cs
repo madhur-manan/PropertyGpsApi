@@ -111,7 +111,9 @@ public class OtpSenderTests
         officers ?? new FakeOfficers(),
         sender,
         new NoTokens(),
+        new NoSessions(),
         Options.Create(new OtpOptions { Source = "PropertyGPS", Length = 6 }),
+        Options.Create(new AuthOptions()),
         NullLogger<OtpService>.Instance);
 
     private sealed class FakeOfficers : IOfficerService
@@ -135,7 +137,14 @@ public class OtpSenderTests
 
     private sealed class NoTokens : IJwtTokenService
     {
-        public (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer) => throw new NotSupportedException();
+        public (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer, Guid sessionId) => throw new NotSupportedException();
+    }
+
+    private sealed class NoSessions : IOfficerSessionStore
+    {
+        public Task<bool> TryStartAsync(long officerId, Guid sessionId, string? deviceId, string? clientIp, bool enforce, CancellationToken ct) => throw new NotSupportedException();
+        public Task<bool> IsCurrentAsync(long officerId, Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task EndAsync(long officerId, Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
     }
 
     private sealed class RecordingLogger<T> : ILogger<T>

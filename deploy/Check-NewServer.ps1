@@ -35,7 +35,7 @@ Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {
 }
 
 Head 'IIS'
-$iisFeatures = 'Web-Server','Web-WebServer','Web-Default-Doc','Web-Static-Content','Web-Http-Errors','Web-Http-Logging','Web-Request-Monitor','Web-Filtering','Web-Stat-Compression','Web-Mgmt-Console'
+$iisFeatures = 'Web-Server','Web-WebServer','Web-Default-Doc','Web-Static-Content','Web-Http-Errors','Web-Http-Logging','Web-Request-Monitor','Web-Filtering','Web-Stat-Compression','Web-Mgmt-Console','Web-WebSockets'
 if (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue) {
     foreach ($f in $iisFeatures) {
         $w = Get-WindowsFeature -Name $f -ErrorAction SilentlyContinue

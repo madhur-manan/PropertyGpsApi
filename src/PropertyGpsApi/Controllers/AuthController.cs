@@ -14,7 +14,7 @@ namespace PropertyGpsApi.Controllers;
 
 [ApiController]
 [Route(ApiRoutes.Base + "/auth")]
-public sealed class AuthController(IOtpService otp, IOfficerService officers) : ControllerBase
+public sealed class AuthController(IOtpService otp, IOfficerService officers, IOfficerSessionStore sessions) : ControllerBase
 {
     /// <summary>Step 1: the officer enters a mobile number and we text them a code.</summary>
     [AllowAnonymous]
@@ -54,4 +54,18 @@ public sealed class AuthController(IOtpService otp, IOfficerService officers) : 
     public async Task<ActionResult<ApiResponse<VerifyOtpResponse>>> Me(CancellationToken ct) =>
         Ok(ApiResponse<VerifyOtpResponse>.Ok(
             await officers.ProfileAsync(User.FindFirstValue(GpsClaims.Mobile), ct)));
+
+    /// <summary>
+    /// Ends this phone's session. Only reached with a current session (the token check
+    /// runs first), and only ever clears this token's own session, so a sign-out can never
+    /// end the one on the officer's newer phone.
+    /// </summary>
+    [HttpPost("logout")]
+    [ProducesResponseType<ApiResponse<bool>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<bool>>> Logout(CancellationToken ct)
+    {
+        if (Guid.TryParse(User.FindFirstValue(GpsClaims.SessionId), out var sessionId))
+            await sessions.EndAsync(User.RequireLong(GpsClaims.UserId), sessionId, ct);
+        return Ok(ApiResponse<bool>.Ok(true, message: "Signed out."));
+    }
 }

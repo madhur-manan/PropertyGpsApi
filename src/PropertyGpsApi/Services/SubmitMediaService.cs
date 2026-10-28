@@ -23,28 +23,38 @@ internal sealed class SubmitMediaService(IMediaStore store, ILogger<SubmitMediaS
         var slots = Collect(request);
         var stored = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (clientName, slot, roadOrdinal) in slots)
+        try
         {
-            if (stored.ContainsKey(clientName)) continue;   // the same file used in two slots
+            foreach (var (clientName, slot, roadOrdinal) in slots)
+            {
+                if (stored.ContainsKey(clientName)) continue;   // the same file used in two slots
 
-            if (!byName.TryGetValue(clientName, out var file))
-                throw ApiException.Unprocessable(
-                    $"The survey refers to '{clientName}' but no such file was uploaded.",
-                    ApiErrorCodes.MediaMissing, recoverable: true);
+                if (!byName.TryGetValue(clientName, out var file))
+                    throw ApiException.Unprocessable(
+                        $"The survey refers to '{clientName}' but no such file was uploaded.",
+                        ApiErrorCodes.MediaMissing, recoverable: true);
 
-            await using var input = file.OpenReadStream();
-            using var buffer = new MemoryStream();
-            await input.CopyToAsync(buffer, ct);
+                await using var input = file.OpenReadStream();
+                using var buffer = new MemoryStream();
+                await input.CopyToAsync(buffer, ct);
 
-            var result = await store.SaveAsync(new MediaUpload(
-                Slot: slot,
-                Epid: request.Epid,
-                RoadOrdinal: roadOrdinal,
-                ClientFileName: clientName,
-                ContentType: file.ContentType ?? "",
-                Content: buffer.ToArray()), ct);
+                var result = await store.SaveAsync(new MediaUpload(
+                    Slot: slot,
+                    Epid: request.Epid,
+                    RoadOrdinal: roadOrdinal,
+                    ClientFileName: clientName,
+                    ContentType: file.ContentType ?? "",
+                    Content: buffer.ToArray()), ct);
 
-            stored[clientName] = result.Url;
+                stored[clientName] = result.Url;
+            }
+        }
+        catch
+        {
+            // A later file was refused (missing, wrong type, too large) after earlier ones
+            // were written. The survey goes no further, so nothing will ever point at them.
+            await store.DiscardAsync(stored.Values, CancellationToken.None);
+            throw;
         }
 
         var unused = byName.Keys.Where(k => !stored.ContainsKey(k)).ToList();

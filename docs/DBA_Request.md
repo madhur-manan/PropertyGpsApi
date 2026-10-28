@@ -107,6 +107,27 @@ re-offer them. `Mst_AppStatus` defines 400, "Returned to RI From QC", but nothin
 The mobile app therefore cannot show an officer work that has come back to them. **This is
 the one genuinely new procedure I would ask for.**
 
+*Update, 13 October 2026 — decided (N2), and now a requirement on the QC portal rather
+than a new procedure.* The API and app are built: a returned survey is shown to **every RI
+of the ward** with QC's reason; any of them may read the earlier answers; whoever allots it
+corrects and resubmits, and the earlier officer's rows are retired. What the QC portal must
+do on **"Return to RI"**, in one transaction:
+
+1. Insert the QC status row: `CRole = 118`, `Status_Id = 12`, `Status_Value = 'RETURN_TO_RI'`,
+   `Status_Remark` = QC's reason (this is what the RI is shown), `Status_Active = 1`.
+2. Set `BtoAMainApp.App_Status = 400`.
+
+**Watch for:** if the portal records the row through `USP_IU_BtoA_StatusDetail_Officer`, that
+procedure turns RETURN_TO_RI into App_Status **16** (its final `else`); the portal must set
+400 *after* calling it, inside the same transaction. Nothing else is needed from the portal:
+the earlier officer's completed assignment is left as it is — the API no longer treats it
+as holding a returned survey, and retires it (`IsActive = 0`, `Remarks = 'Returned by QC'`)
+when another officer allots it.
+
+No new table and no new column: the earlier answers another RI starts from are read back
+from the survey's own rows (`BtoA_MainApp_Officer`, `BtoA_SiteRoadDetails_Officer`,
+`BtoA_StatusDetail_Officer`). Photographs are not passed on: the officer correcting it takes them again.
+
 **D2. Eleven officer answers have no column anywhere.** I currently write them as JSON
 into `Ofcr_Aditional` — recoverable, but not queryable or reportable:
 `isLandUntraceable`, `isLandLocationUpdated`, `isGpsLocationUpdated`, `khataComments`,
@@ -309,6 +330,32 @@ UDte, URole, Ofcr_Notice_Document); `SELECT, INSERT, UPDATE` on `BtoA_DocumentTr
 
 ---
 
+## G. One phone per officer (7 October 2026)
+
+**G1. New table `dbo.GpsOfficerSession` in the master database.** Each officer is now bound
+to one phone: the first phone they sign in on (identified by Android's ANDROID_ID, which
+survives reinstalling the app). Every other phone is refused, even after the officer signs
+out; only an administrator can move them (G2). Builds before 1.1.0 send no phone id and are
+told to update. The table has one row per officer: `OfficerId` PK, `DeviceId` (the bound
+phone), `SessionId` (the sign-in live on it; cleared by sign-out), `ClientIp`, `StartedAt`,
+`EndedAt`, `ReplacedCount`. Every authenticated request checks it with a primary-key lookup.
+No procedures. Please create the table before the API that uses it is deployed, and grant
+the API's login `SELECT, INSERT, UPDATE` on it. Until then the API can run with
+`Auth:SingleDeviceSessions=false`, which signs officers in as before.
+
+**G2. Moving an officer to a new phone (until the admin screen exists).** For a lost,
+broken, replaced or factory-reset phone. Clears the binding, so the next phone the officer
+signs in on becomes theirs; the old phone is signed out at its next request:
+
+```sql
+UPDATE s SET s.DeviceId = NULL, s.SessionId = NULL, s.EndedAt = GETDATE()
+FROM dbo.GpsOfficerSession s
+JOIN dbo.mst_Officer o ON o.Ofcr_Id = s.OfficerId
+WHERE o.Ofcr_MNo = '<officer mobile number>';
+```
+
+---
+
 ## Summary
 
 | | Item | Blocking? |
@@ -319,7 +366,7 @@ UDte, URole, Ofcr_Notice_Document); `SELECT, INSERT, UPDATE` on `BtoA_DocumentTr
 | B2 | `SCOPE_IDENTITY()` ordering in the road procedure | Wrong id returned today |
 | B3 | Mark OTP consumed | Security |
 | D4 | Least-privilege login | Before go-live |
-| D1 | QC-returns procedure | New requirement |
+| D1 | QC portal sets App_Status 400 + QC remark on "Return to RI" | **Yes** — before QC returns work on live |
 | E1 | e-Khata database names on the new test server | **Yes** — submit on the test server |
 | E2 | Version comparison in `USP_CheckMobileAppVersion` | **Yes** — before the 1.1.0 release |
 | E3 | Blank and inactive road rows; origin of the blank rows | Question — handled in the API meanwhile |
@@ -329,6 +376,7 @@ UDte, URole, Ofcr_Notice_Document); `SELECT, INSERT, UPDATE` on `BtoA_DocumentTr
 | F4 | `USP_S_GetAppDetails`: inactive rows, typed name, TOP over rows | Only if the old fetch stays |
 | F5 | KSRSAC check without the property's street | Wrong warnings today |
 | F6, F7 | Street list source; extra permissions for D4 | For information |
+| G1 | `GpsOfficerSession` table and its grants (one phone per officer) | **Yes** — before the API that uses it |
 | B4, D2, D3, D5 | For discussion | — |
 
 Happy to walk through any of these at your desk, and to supply ready-to-review scripts for

@@ -18,6 +18,9 @@ namespace PropertyGpsApi.Services;
 ///
 /// The old fetch (PropertyService over USP_S_GetAppDetails) is untouched and still serves
 /// builds without WARD_SYNC.
+///
+/// A ward is its ULB code and ward number (BtoA_EPIDMetaData.MD_ULBCode + MD_WardId, the
+/// number as trimmed text). Zones, corporations and GBA ids play no part.
 /// </summary>
 internal sealed class WardSyncService(
     ISqlConnectionFactory connections,
@@ -33,17 +36,10 @@ internal sealed class WardSyncService(
         RequirePositive(request.KnownAppIds, "knownAppIds");
         RequirePositive(request.ReturnedAppIds, "returnedAppIds");
         RequirePositive(request.RefreshAppIds, "refreshAppIds");
-        await RequireMappedWardAsync(officerId, request.ZoneId, request.WardId, ct);
+        var ward = RequireWard(request.UlbCode, request.WardNumber);
+        await RequireMappedWardAsync(officerId, request.UlbCode, ward, ct);
 
-        var p = new DynamicParameters();
-        p.Add("@ZoneId", request.ZoneId, DbType.Int32);
-        p.Add("@WardId", request.WardId, DbType.Int32);
-        p.Add("@LocalCount", request.LocalCount, DbType.Int32);
-        p.Add("@KnownAppIds", ToCsv(request.KnownAppIds), DbType.String, size: -1);
-        p.Add("@ReturnedAppIds", ToCsv(request.ReturnedAppIds), DbType.String, size: -1);
-        p.Add("@BatchSize", ClampBatch(request.BatchSize), DbType.Int32);
-        p.Add("@IncludeClosed", request.IncludeClosed, DbType.Boolean);
-        p.Add("@RefreshAppIds", ToCsv(request.RefreshAppIds), DbType.String, size: -1);
+        var p = PageParameters(request, ward);
 
         await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
 
@@ -67,32 +63,118 @@ internal sealed class WardSyncService(
         var appIds = grouped.Select(g => g.Key).ToList();
         var assignmentsByApp = await assignments.ActiveForAsync(connection, appIds, ct);
         var ownersByApp = await owners.ForAsync(connection, appIds, ct);
+        var qcByApp = await QcRemarksAsync(
+            connection, grouped.Where(g => g.First().Status == ReturnedFromQc).Select(g => g.Key).ToList(), ct);
+
+        // Once per sync, with the closed list: who holds what the phone already has.
+        List<WardSyncHolderDto> holders = [];
+        if (request.IncludeClosed)
+        {
+            var open = StillOpen(request.KnownAppIds, closed.Select(c => c.AppId));
+            holders = Holders(open, await assignments.ActiveForAsync(connection, open, ct));
+        }
 
         logger.LogInformation(
-            "Ward sync for officer {OfficerId} zone {Zone} ward {Ward}: server {ServerCount}, phone {LocalCount} " +
-            "(sent {Known} ids), missing {MissingCount}, sending {Apps} applications ({Rows} rows), {Closed} closed",
-            officerId, request.ZoneId, request.WardId, summary.ServerCount, summary.LocalCount,
-            request.KnownAppIds.Count, summary.MissingCount, grouped.Count, rows.Count, closed.Count);
+            "Ward sync for officer {OfficerId} ULB {Ulb} ward {Ward}: server {ServerCount}, phone {LocalCount} " +
+            "(sent {Known} ids), missing {MissingCount}, sending {Apps} applications ({Rows} rows), {Closed} closed, " +
+            "{Held} of {Holders} held",
+            officerId, request.UlbCode, ward, summary.ServerCount, summary.LocalCount,
+            request.KnownAppIds.Count, summary.MissingCount, grouped.Count, rows.Count, closed.Count,
+            holders.Count(h => h.AssignedToUserId != 0), holders.Count);
 
         return new WardSyncResponse
         {
             ServerCount = summary.ServerCount,
             LocalCount = summary.LocalCount,
             MissingCount = summary.MissingCount,
-            Items = grouped.Select(g => PropertyMapper.Map(g, assignmentsByApp, ownersByApp, officerId)).ToList(),
-            Closed = closed.Select(c => new WardSyncClosedDto { AppId = c.AppId, AppStatus = c.AppStatus }).ToList()
+            Items = grouped.Select(g => PropertyMapper.Map(g, assignmentsByApp, ownersByApp, officerId, qcByApp)).ToList(),
+            Closed = closed.Select(c => new WardSyncClosedDto { AppId = c.AppId, AppStatus = c.AppStatus }).ToList(),
+            Holders = holders
         };
     }
+
+    /// <summary>
+    /// The parameters of USP_S_GpsWardSync: the ward as @UlbCode + @WardNumber (the trimmed
+    /// text, as the procedure compares MD_WardId), then the same ones as before.
+    /// </summary>
+    internal static DynamicParameters PageParameters(WardSyncRequest request, string wardNumber)
+    {
+        var p = new DynamicParameters();
+        p.Add("@UlbCode", request.UlbCode, DbType.Int32);
+        p.Add("@WardNumber", wardNumber, DbType.String, size: WardNumbers.MaxLength);
+        p.Add("@LocalCount", request.LocalCount, DbType.Int32);
+        p.Add("@KnownAppIds", ToCsv(request.KnownAppIds), DbType.String, size: -1);
+        p.Add("@ReturnedAppIds", ToCsv(request.ReturnedAppIds), DbType.String, size: -1);
+        p.Add("@BatchSize", ClampBatch(request.BatchSize), DbType.Int32);
+        p.Add("@IncludeClosed", request.IncludeClosed, DbType.Boolean);
+        p.Add("@RefreshAppIds", ToCsv(request.RefreshAppIds), DbType.String, size: -1);
+        // Sent only when the phone asks for every application: a server without db/44 has no
+        // @OnePerEpid, and the default (1) is what the procedure does without it.
+        if (!request.OnePerEpid)
+            p.Add("@OnePerEpid", false, DbType.Boolean);
+        return p;
+    }
+
+    /// <summary>BtoAMainApp.App_Status when QC has sent the survey back to the RIs (N2).</summary>
+    internal const int ReturnedFromQc = 400;
+
+    /// <summary>masterDB_prod.dbo.Mst_Roles 118, as HistoryService reads it.</summary>
+    internal const int QcRoleId = 118;
+
+    /// <summary>
+    /// What QC said when it returned each application: its newest active QC status row, the
+    /// remark or else the rejection reason. Only QC's own rows - the newest row of any role is
+    /// usually the officer's own note, which must never show under QC's name.
+    /// </summary>
+    internal const string QcRemarksSql = """
+        SELECT AppId = ids.AppId, Remark = q.Remark
+        FROM (SELECT DISTINCT AppId = TRY_CAST(value AS int) FROM STRING_SPLIT(@appIds, ',')) ids
+        CROSS APPLY (SELECT TOP (1) Remark = COALESCE(NULLIF(LTRIM(RTRIM(s.Status_Remark)), N''),
+                                                      NULLIF(LTRIM(RTRIM(s.Status_Rejected_Reason)), N''))
+                     FROM dbo.BtoA_StatusDetail_Officer s WITH (NOLOCK)
+                     WHERE s.Ofcr_App_Id = ids.AppId AND s.Status_Active = 1 AND s.CRole = @qcRole
+                     ORDER BY s.CDte DESC, s.Ofcr_RowId DESC) q
+        WHERE q.Remark IS NOT NULL;
+        """;
+
+    private static async Task<IReadOnlyDictionary<int, string>> QcRemarksAsync(
+        System.Data.Common.DbConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct)
+    {
+        if (appIds.Count == 0) return new Dictionary<int, string>();
+        var rows = await connection.QueryAsync<(int AppId, string Remark)>(new CommandDefinition(
+            QcRemarksSql, new { appIds = ToCsv(appIds), qcRole = QcRoleId }, commandTimeout: 60, cancellationToken: ct));
+        return rows.ToDictionary(r => r.AppId, r => r.Remark);
+    }
+
+    /// <summary>The applications the phone holds that are still workable here: not reported closed.</summary>
+    internal static List<int> StillOpen(IEnumerable<int> known, IEnumerable<int> closed)
+    {
+        var gone = closed.ToHashSet();
+        return known.Distinct().Where(id => !gone.Contains(id)).ToList();
+    }
+
+    /// <summary>
+    /// One entry per application, 0 when nobody holds it - so a phone clears a holder that
+    /// has released it, rather than only ever learning of new ones.
+    /// </summary>
+    internal static List<WardSyncHolderDto> Holders(
+        IEnumerable<int> appIds, IReadOnlyDictionary<int, AssignmentRow> held) =>
+        appIds.Select(id => new WardSyncHolderDto
+        {
+            AppId = id,
+            AssignedToUserId = held.TryGetValue(id, out var row) ? row.Arch_Id : 0
+        }).ToList();
 
     public async Task<WardSyncAckResponse> AckAsync(
         WardSyncAckRequest request, long officerId, CancellationToken ct)
     {
         RequirePositive(request.AppIds, "appIds");
-        await RequireMappedWardAsync(officerId, request.ZoneId, request.WardId, ct);
+        var ward = RequireWard(request.UlbCode, request.WardNumber);
+        await RequireMappedWardAsync(officerId, request.UlbCode, ward, ct);
 
         var p = new DynamicParameters();
-        p.Add("@ZoneId", request.ZoneId, DbType.Int32);
-        p.Add("@WardId", request.WardId, DbType.Int32);
+        p.Add("@UlbCode", request.UlbCode, DbType.Int32);
+        p.Add("@WardNumber", ward, DbType.String, size: WardNumbers.MaxLength);
         p.Add("@AppIds", ToCsv(request.AppIds), DbType.String, size: -1);
 
         await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
@@ -100,27 +182,156 @@ internal sealed class WardSyncService(
             Sp.Call(procedures.Value.WardSyncAck, p, ct));
 
         logger.LogInformation(
-            "Ward sync ack from officer {OfficerId} zone {Zone} ward {Ward}: {Requested} saved on the phone, {Updated} newly recorded",
-            officerId, request.ZoneId, request.WardId, row.Requested, row.Updated);
+            "Ward sync ack from officer {OfficerId} ULB {Ulb} ward {Ward}: {Requested} saved on the phone, {Updated} newly recorded",
+            officerId, request.UlbCode, ward, row.Requested, row.Updated);
 
         return new WardSyncAckResponse { Requested = row.Requested, Updated = row.Updated };
     }
 
     /// <summary>
-    /// The ward must be one the officer is mapped to (mst_Ofcr_WardMapping, else their own
-    /// ward) - the same list their dropdown shows. Checked against the master tables rather
-    /// than the token, which carries only one ward and so refused a two-ward RI's second.
+    /// Who holds each asked-for application now: its newest active row in
+    /// BtoA_Architect_AssignedApp, or 0. Limited to applications in the requested ward, so the
+    /// answer never names the holder of anything outside the officer's jurisdiction. The ids
+    /// arrive as one string, so a large ward cannot pass SQL Server's parameter limit.
     /// </summary>
-    private async Task RequireMappedWardAsync(long officerId, int zoneId, int wardId, CancellationToken ct)
+    internal const string HoldersSql = """
+        SELECT AppId = ap.App_Id, Arch_Id = ISNULL(h.Arch_Id, 0)
+        FROM (SELECT DISTINCT AppId = TRY_CAST(value AS int) FROM STRING_SPLIT(@appIds, ',')) ids
+        JOIN dbo.BtoAMainApp ap WITH (NOLOCK) ON ap.App_Id = ids.AppId
+        OUTER APPLY (SELECT TOP (1) a.Arch_Id
+                     FROM dbo.BtoA_Architect_AssignedApp a WITH (NOLOCK)
+                     WHERE a.AppId = ap.App_Id AND a.IsActive = 1
+                       AND NOT (a.Status = 'Completed' AND ap.App_Status = 400)
+                     ORDER BY a.AssignmentDate DESC) h
+        WHERE EXISTS (SELECT 1 FROM dbo.BtoA_EPIDMetaData md WITH (NOLOCK)
+                      WHERE md.MD_APP_ID = ap.App_Id AND md.MD_MotherEPID = ap.App_MotherEPID
+                        AND md.MD_ULBCode = @ulbCode
+                        AND LTRIM(RTRIM(CONVERT(nvarchar(20), md.MD_WardId))) = @wardNumber);
+        """;
+
+    public async Task<WardHoldersResponse> HoldersAsync(
+        WardHoldersRequest request, long officerId, CancellationToken ct)
+    {
+        RequirePositive(request.AppIds, "appIds");
+        var ward = RequireWard(request.UlbCode, request.WardNumber);
+        await RequireMappedWardAsync(officerId, request.UlbCode, ward, ct);
+        if (request.AppIds.Count == 0) return new WardHoldersResponse();
+
+        await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
+        var rows = (await connection.QueryAsync<HolderRow>(new CommandDefinition(
+            HoldersSql,
+            new { appIds = ToCsv(request.AppIds), ulbCode = request.UlbCode, wardNumber = ward },
+            commandTimeout: 60, cancellationToken: ct))).AsList();
+
+        logger.LogInformation(
+            "Holders for officer {OfficerId} ULB {Ulb} ward {Ward}: asked {Asked}, in the ward {Found}, {Held} held",
+            officerId, request.UlbCode, ward, request.AppIds.Count, rows.Count,
+            rows.Count(r => r.Arch_Id != 0));
+
+        return new WardHoldersResponse
+        {
+            Holders = rows.Select(r => new WardSyncHolderDto { AppId = r.AppId, AssignedToUserId = r.Arch_Id }).ToList()
+        };
+    }
+
+    /// <summary>
+    /// The application, if it is in the requested ward - so a returned survey's answers are
+    /// shown only to officers of its own ward - with its status and QC's remark.
+    /// </summary>
+    internal const string ReturnedAppSql = """
+        SELECT AppId = ap.App_Id, ApplicationId = ap.App_DisplayId, AppStatus = ap.App_Status
+        FROM dbo.BtoAMainApp ap WITH (NOLOCK)
+        WHERE ap.App_Id = @appId AND ap.App_Active = 1
+          AND EXISTS (SELECT 1 FROM dbo.BtoA_EPIDMetaData md WITH (NOLOCK)
+                      WHERE md.MD_APP_ID = ap.App_Id AND md.MD_MotherEPID = ap.App_MotherEPID
+                        AND md.MD_ULBCode = @ulbCode
+                        AND LTRIM(RTRIM(CONVERT(nvarchar(20), md.MD_WardId))) = @wardNumber);
+        """;
+
+    public async Task<ReturnedSurveyResponse> ReturnedSurveyAsync(
+        ReturnedSurveyRequest request, long officerId, CancellationToken ct)
+    {
+        var ward = RequireWard(request.UlbCode, request.WardNumber);
+        await RequireMappedWardAsync(officerId, request.UlbCode, ward, ct);
+
+        await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
+        var app = await connection.QuerySingleOrDefaultAsync<ReturnedAppRow>(new CommandDefinition(
+            ReturnedAppSql, new { appId = request.AppId, ulbCode = request.UlbCode, wardNumber = ward },
+            commandTimeout: 30, cancellationToken: ct));
+
+        if (app is null)
+            throw ApiException.Unprocessable(
+                "This application is not in that ward.", ApiErrorCodes.ApplicationNotFound);
+        if (app.AppStatus != ReturnedFromQc)
+            throw new ApiException(
+                StatusCodes.Status409Conflict, ApiErrorCodes.ApplicationClosed,
+                "QC is no longer returning this application. Fetch / Update to see where it stands.");
+
+        // Rebuilt from the survey's own rows - nothing is stored for this (the user's rule).
+        var earlier = await EarlierSurveyReader.ReadAsync(connection, app.AppId, ct);
+        var qc = await QcRemarksAsync(connection, [app.AppId], ct);
+
+        logger.LogInformation(
+            "Returned survey {AppId} read by officer {OfficerId}: earlier survey {Found}",
+            app.AppId, officerId,
+            earlier is { } e ? $"by officer {e.Submission.SubmittedBy}, {e.Survey.SiteDetails.RoadDetails.Count} road(s)" : "not found");
+
+        return new ReturnedSurveyResponse
+        {
+            AppId = app.AppId,
+            ApplicationId = app.ApplicationId,
+            QcRemarks = qc.TryGetValue(app.AppId, out var remark) ? remark : null,
+            SubmittedBy = earlier?.Submission.SubmittedBy,
+            // CDte is the server's local time (IST).
+            SubmittedOn = earlier is { } s ? new DateTimeOffset(s.Submission.SubmittedOn, TimeSpan.FromHours(5.5)) : null,
+            Survey = earlier?.Survey
+        };
+    }
+
+    private sealed class ReturnedAppRow
+    {
+        public int AppId { get; init; }
+        public string? ApplicationId { get; init; }
+        public int? AppStatus { get; init; }
+    }
+
+    private sealed class HolderRow
+    {
+        public int AppId { get; init; }
+        public int Arch_Id { get; init; }
+    }
+
+    /// <summary>
+    /// The ward must be one the officer is mapped to (their own ward and mst_Ofcr_WardMapping)
+    /// - the same list their dropdown shows. Checked against the master tables rather than
+    /// the token, which carries only one ward and so refused a two-ward RI's second.
+    /// </summary>
+    private async Task RequireMappedWardAsync(long officerId, int ulbCode, string wardNumber, CancellationToken ct)
     {
         var wards = await officers.MappedWardsAsync(officerId, ct);
-        if (!IsMapped(wards, zoneId, wardId))
+        if (!IsMapped(wards, ulbCode, wardNumber))
             throw ApiException.Forbidden(
                 "This ward is not mapped to you.", ApiErrorCodes.OutsideJurisdiction);
     }
 
-    internal static bool IsMapped(IEnumerable<Jurisdiction> wards, int zoneId, int wardId) =>
-        wards.Any(w => w.ZoneId == zoneId && w.WardId == wardId);
+    /// <summary>The same ULB, and the same ward number trimmed and ignoring case.</summary>
+    internal static bool IsMapped(IEnumerable<Jurisdiction> wards, int ulbCode, string? wardNumber) =>
+        JurisdictionRules.Covers(wards, ulbCode, wardNumber);
+
+    /// <summary>
+    /// The ward number as the procedures compare it: trimmed. A blank or overlong one, or no
+    /// ULB, is a bad request - checked here as well as by the model's attributes, because the
+    /// trimmed value is what is sent on.
+    /// </summary>
+    internal static string RequireWard(int ulbCode, string? wardNumber)
+    {
+        if (ulbCode <= 0)
+            throw ApiException.BadRequest("'ulbCode' is required.");
+        if (!WardNumbers.IsValid(wardNumber))
+            throw ApiException.BadRequest(
+                $"'wardNumber' is required, at most {WardNumbers.MaxLength} characters.");
+        return WardNumbers.Clean(wardNumber)!;
+    }
 
     internal static int ClampBatch(int requested) =>
         Math.Clamp(requested, 1, WardSyncLimits.MaxBatch);

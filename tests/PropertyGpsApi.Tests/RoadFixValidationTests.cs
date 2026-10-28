@@ -17,11 +17,15 @@ namespace PropertyGpsApi.Tests;
 /// </summary>
 public sealed class RoadFixValidationTests
 {
-    private const int RevenueInspector = 116;
-    private const int Ward = 54;
+    private const int RevenueInspector = 117;
+    private const int Ulb = 1;
+    private const string Ward = "54";
+
+    // The wards mapped to the officer, as IOfficerService.MappedWardsAsync gives them.
+    private static readonly Jurisdiction[] OwnWards = [new() { UlbCode = Ulb, WardNumber = Ward }];
 
     private static readonly VerificationSubmitService Service = new(
-        null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
+        null!, null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
 
     private const double P1Lat = 12.9101, P1Lng = 77.5601, P2Lat = 12.9105, P2Lng = 77.5609;
 
@@ -70,7 +74,8 @@ public sealed class RoadFixValidationTests
     {
         ApplicationId = "TESTAPP0001",
         Epid = "9990000001",
-        WardId = Ward,
+        UlbCode = Ulb,
+        WardNumber = Ward,
         PropertyLandExists = 1,
         IsAllBhoomiSurveyNosCorrect = 1,
         NearestPublicRoadLat = nearLat,
@@ -82,7 +87,7 @@ public sealed class RoadFixValidationTests
     {
         try
         {
-            Service.Validate(request, RevenueInspector, Ward);
+            Service.Validate(request, RevenueInspector, OwnWards);
             return [];
         }
         catch (SubmitRejectedException e)
@@ -133,23 +138,33 @@ public sealed class RoadFixValidationTests
         Assert.Equal(["Road 2 is empty.", "Road 4 is empty."], errors.Select(e => e.Message));
     }
 
-    // ---- A3: road id that is not a number -------------------------------------------------
+    // ---- A3: road id is text, at most 50 characters ----------------------------------------
 
+    /// <summary>
+    /// Street ids come from UDD_MASTERDB as text and are not promised to be numbers, so A3's
+    /// "must be an int" rule is gone: any id the street list gave is sent as it is.
+    /// </summary>
     [Theory]
     [InlineData("ST1001")]
     [InlineData("97.6")]
     [InlineData("99999999999")]
-    public void A3_a_road_id_that_is_not_an_int_is_refused(string roadId) =>
-        AssertOnly(Survey(Public(roadId: roadId)), "siteDetails.roadDetails[0].roadId", "INVALID",
-            $"Road 1 has a road id that is not a number ({roadId}).");
-
-    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData(" 976 ")]
     [InlineData("999")]
-    public void A3_a_numeric_or_absent_road_id_is_accepted(string? roadId) =>
+    public void A3_any_road_id_of_at_most_50_characters_is_accepted(string? roadId) =>
         AssertAccepted(Survey(Public(roadId: roadId)));
+
+    /// <summary>The procedure's @BtoA_RoadId is NVARCHAR(50): a longer id would be cut and match nothing.</summary>
+    [Fact]
+    public void A3_a_road_id_over_50_characters_is_refused() =>
+        AssertOnly(Survey(Public(roadId: new string('R', 51))), "siteDetails.roadDetails[0].roadId", "TOO_LONG",
+            "Road 1: this text is 51 characters; at most 50 can be stored.");
+
+    /// <summary>Measured trimmed, as it is sent.</summary>
+    [Fact]
+    public void A3_a_50_character_road_id_with_spaces_around_it_is_accepted() =>
+        AssertAccepted(Survey(Public(roadId: "  " + new string('R', 50) + "  ")));
 
     // ---- A4: 0/1 answers and coordinates ---------------------------------------------------
 

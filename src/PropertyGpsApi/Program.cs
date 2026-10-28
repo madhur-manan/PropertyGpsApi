@@ -12,10 +12,12 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using PropertyGpsApi;
 using PropertyGpsApi.Common;
+using PropertyGpsApi.Endpoints;
 using PropertyGpsApi.Interfaces;
 using PropertyGpsApi.Services;
 using PropertyGpsApi.Models;
 using PropertyGpsApi.Infrastructure.Data;
+using PropertyGpsApi.Infrastructure.Logging;
 using PropertyGpsApi.Infrastructure.Options;
 using PropertyGpsApi.Infrastructure.Security;
 using PropertyGpsApi.Infrastructure.Security.BodyEncryption;
@@ -27,6 +29,10 @@ var builder = WebApplication.CreateBuilder(args);
 // appsettings.json but below environment variables and the command line. See LocalSettings
 // for why it exists and why its position matters.
 LocalSettings.Add(builder.Configuration);
+
+// logs\app-yyyyMMdd.log, written line by line. The IIS module's stdout log holds output back
+// until the site stops, so on a quiet server it shows nothing - see DailyFileLoggerProvider.
+builder.Logging.AddDailyFile(builder.Configuration);
 
 if (!StartupChecks.TryEnsureConfigured(builder, out var configurationError))
 {
@@ -58,6 +64,14 @@ builder.Services.AddOptions<OtpOptions>()
     .Bind(builder.Configuration.GetSection(OtpOptions.Section))
     .ValidateDataAnnotations().ValidateOnStart();
 
+builder.Services.AddOptions<SurveyOptions>()
+    .Bind(builder.Configuration.GetSection(SurveyOptions.Section))
+    .ValidateDataAnnotations().ValidateOnStart();
+
+builder.Services.AddOptions<AuthOptions>()
+    .Bind(builder.Configuration.GetSection(AuthOptions.Section))
+    .ValidateOnStart();
+
 builder.Services.AddOptions<JwtOptions>()
     .Bind(builder.Configuration.GetSection(JwtOptions.Section))
     .ValidateDataAnnotations()
@@ -84,6 +98,8 @@ builder.Services.AddSingleton<RequestBodyDecryptionFilter>();
 
 builder.Services.AddScoped<IOfficerService, OfficerService>();
 builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddScoped<IOfficerSessionStore, OfficerSessionStore>();
+builder.Services.AddScoped<SessionValidator>();
 builder.Services.AddScoped<IApplicationService, ApplicationService>();
 builder.Services.AddScoped<IPropertyService, PropertyService>();
 builder.Services.AddSingleton<IAssignmentReader, AssignmentReader>();
@@ -96,6 +112,7 @@ builder.Services.AddScoped<ISubmitMediaService, SubmitMediaService>();
 builder.Services.AddScoped<IMediaAccessService, MediaAccessService>();
 builder.Services.AddScoped<IHistoryService, HistoryService>();
 builder.Services.AddScoped<IAppVersionService, AppVersionService>();
+builder.Services.AddSingleton<IWardLiveHub, WardLiveHub>();
 
 // The OTP sender seam. DevelopmentOtpSender writes the code to the log, which is the whole
 // point of it, and exactly why selecting it outside Development must fail the process
@@ -198,14 +215,21 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             // The framework default is an empty body. The mobile client must receive our
             // envelope, and critically must see retryable=true so an expired token sends
             // the officer back to sign-in instead of parking their survey as failed.
+            // One phone per officer: a valid signature is not enough, the token's session
+            // must still be the officer's row in dbo.GpsOfficerSession (db/29).
+            OnTokenValidated = async ctx =>
+            {
+                var check = await ctx.HttpContext.RequestServices.GetRequiredService<SessionValidator>()
+                    .CheckAsync(ctx.Principal!, ctx.HttpContext.RequestAborted);
+                if (check == SessionCheck.Current) return;
+
+                ctx.HttpContext.Items[SessionValidator.OutcomeKey] = check;
+                ctx.Fail("Session " + check);
+            },
             OnChallenge = ctx =>
             {
                 ctx.HandleResponse();
-                return ErrorEnvelopeWriter.WriteAsync(
-                    ctx.HttpContext, StatusCodes.Status401Unauthorized,
-                    ApiErrorCodes.AuthRequired,
-                    "Your session has expired. Please sign in again.",
-                    retryable: true);
+                return SessionValidator.WriteChallengeAsync(ctx.HttpContext);
             },
             OnForbidden = ctx => ErrorEnvelopeWriter.WriteAsync(
                 ctx.HttpContext, StatusCodes.Status403Forbidden,
@@ -374,7 +398,12 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// The ward live socket (WardLiveEndpoint): pings keep it open through NAT and mobile networks
+// that drop a silent connection.
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
+
 app.MapControllers();
+app.MapWardLive();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

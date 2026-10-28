@@ -9,7 +9,11 @@ namespace PropertyGpsApi.Infrastructure.Security;
 
 public interface IJwtTokenService
 {
-    (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer);
+    /// <summary>
+    /// A token for this officer, carrying <paramref name="sessionId"/> as its sid claim so
+    /// every request can be checked against dbo.GpsOfficerSession (one phone per officer).
+    /// </summary>
+    (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer, Guid sessionId);
 }
 
 /// <summary>
@@ -21,15 +25,29 @@ public static class GpsClaims
 {
     public const string UserId = "userId";
     public const string RoleId = "roleId";
+    public const string Mobile = "mobile";
+
+    /// <summary>
+    /// The ULB code and ward number of the officer's FIRST jurisdiction, both as strings.
+    /// Informational: a ward officer's own-ward checks read every mapped ward from the master
+    /// tables (IOfficerService.MappedWardsAsync), since a token can carry only one.
+    /// </summary>
+    public const string UlbCode = "ulb";
+    public const string WardNumber = "ward";
+
+    // No longer issued: Property GPS works by ULB + ward number. Tokens issued before the
+    // change still carry them, and nothing reads them.
     public const string CorporationId = "corpId";
     public const string ZoneId = "zoneId";
     public const string WardId = "wardId";
-    public const string Mobile = "mobile";
+
+    /// <summary>The sign-in session (dbo.GpsOfficerSession.SessionId), as a GUID string.</summary>
+    public const string SessionId = "sid";
 }
 
 internal sealed class JwtTokenService(IOptions<JwtOptions> options, TimeProvider clock) : IJwtTokenService
 {
-    public (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer)
+    public (string Token, DateTimeOffset ExpiresAt) Issue(Officer officer, Guid sessionId)
     {
         var jwt = options.Value;
         var expiresAt = clock.GetUtcNow().AddMinutes(jwt.ExpiryMinutes);
@@ -41,14 +59,16 @@ internal sealed class JwtTokenService(IOptions<JwtOptions> options, TimeProvider
             new(GpsClaims.UserId, officer.OfficerId.ToString()),
             new(GpsClaims.RoleId, officer.RoleId.ToString()),
             new(GpsClaims.Mobile, officer.Mobile ?? ""),
-            new("name", officer.Name ?? "")
+            new("name", officer.Name ?? ""),
+            new(GpsClaims.SessionId, sessionId.ToString("D"))
         };
 
-        if (officer.CorporationId is { } corp) claims.Add(new Claim(GpsClaims.CorporationId, corp.ToString()));
-        if (officer.ZoneId is { } zone) claims.Add(new Claim(GpsClaims.ZoneId, zone.ToString()));
-        // A zone-level officer (role 125) legitimately has no ward, so this claim is absent
-        // rather than zero - callers must treat "no ward" as a real state.
-        if (officer.WardId is { } ward) claims.Add(new Claim(GpsClaims.WardId, ward.ToString()));
+        // The first jurisdiction, else the officer's own ULB and ward. An officer above ward
+        // level legitimately has no ward, so a claim is absent rather than empty - callers
+        // must treat "no ward" as a real state.
+        var (ulb, ward) = TokenWard(officer);
+        if (ulb is { } u) claims.Add(new Claim(GpsClaims.UlbCode, u.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        if (ward is { } w) claims.Add(new Claim(GpsClaims.WardNumber, w));
 
         var credentials = new SigningCredentials(
             new SymmetricSecurityKey(jwt.KeyBytes), SecurityAlgorithms.HmacSha256);
@@ -62,5 +82,18 @@ internal sealed class JwtTokenService(IOptions<JwtOptions> options, TimeProvider
             signingCredentials: credentials);
 
         return (new JwtSecurityTokenHandler().WriteToken(token), expiresAt);
+    }
+
+    /// <summary>
+    /// The ULB and ward the token carries: the first jurisdiction - the one the sign-in reply
+    /// shows on top - or, with none, the officer's own. A ward is only taken with its ULB.
+    /// </summary>
+    internal static (int? UlbCode, string? WardNumber) TokenWard(Officer officer)
+    {
+        if (officer.Jurisdictions.FirstOrDefault(j => j.UlbCode is > 0) is { } first)
+            return (first.UlbCode, WardNumbers.Clean(first.WardNumber));
+        return officer.UlbCode is > 0
+            ? (officer.UlbCode, WardNumbers.Clean(officer.WardNumber))
+            : (null, null);
     }
 }

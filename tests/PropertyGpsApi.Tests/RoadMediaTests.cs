@@ -169,6 +169,14 @@ public sealed class RoadMediaTests : IDisposable
 
         public Task<StoredFile?> OpenAsync(string epid, string fileName, CancellationToken ct) =>
             Task.FromResult<StoredFile?>(null);
+
+        public List<string> Discarded { get; } = [];
+
+        public Task DiscardAsync(IEnumerable<string> urls, CancellationToken ct)
+        {
+            Discarded.AddRange(urls);
+            return Task.CompletedTask;
+        }
     }
 
     private static IFormFileCollection Files(params string[] names)
@@ -257,6 +265,34 @@ public sealed class RoadMediaTests : IDisposable
 
         Assert.Equal(ApiErrorCodes.MediaMissing, ex.Code);
         Assert.Equal("The survey refers to 'notice_A.jpg' but no such file was uploaded.", ex.Message);
+    }
+
+    /// <summary>
+    /// The road's other two photographs were written before the missing notice was found.
+    /// The survey goes no further, so they are removed rather than left behind on every retry.
+    /// </summary>
+    [Fact]
+    public async Task Files_stored_before_a_refusal_are_discarded()
+    {
+        var store = new RecordingStore();
+        await Assert.ThrowsAsync<ApiException>(() =>
+            new SubmitMediaService(store, NullLogger<SubmitMediaService>.Instance).StoreAsync(
+                Survey(Road(91011, "road_A.jpg", "public_road_A.jpg", "notice_A.jpg")),
+                Files("road_A.jpg", "public_road_A.jpg"), CancellationToken.None));
+
+        Assert.Equal(
+            ["stored://private/91011/road_A.jpg", "stored://public/91011/public_road_A.jpg"],
+            store.Discarded);
+    }
+
+    [Fact]
+    public async Task A_survey_whose_files_all_store_discards_nothing()
+    {
+        var (store, _) = await StoreAsync(
+            Survey(Road(91011, "road_A.jpg", null, "notice_A.jpg")),
+            Files("road_A.jpg", "notice_A.jpg"));
+
+        Assert.Empty(store.Discarded);
     }
 
     [Fact]

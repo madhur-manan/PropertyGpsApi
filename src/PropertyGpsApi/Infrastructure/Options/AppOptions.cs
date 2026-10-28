@@ -18,7 +18,12 @@ public sealed class JwtOptions
     [Required(AllowEmptyStrings = false)] public string Issuer { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string Audience { get; init; } = "";
 
-    [Range(5, 10080)] public int ExpiryMinutes { get; init; } = 480;
+    /// <summary>
+    /// Token lifetime, up to 30 days (43200). Safe that long because every request is also
+    /// checked against the session table (one phone per officer), which can end a session
+    /// at once.
+    /// </summary>
+    [Range(5, 43200)] public int ExpiryMinutes { get; init; } = 43200;
 
     public byte[] KeyBytes => System.Text.Encoding.UTF8.GetBytes(Key);
 
@@ -26,6 +31,45 @@ public sealed class JwtOptions
     public bool KeyIsStrongEnough => KeyBytes.Length >= 32;
 
     public bool IsPlaceholder => Key.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase);
+}
+
+public sealed class AuthOptions
+{
+    public const string Section = "Auth";
+
+    /// <summary>
+    /// One phone per officer: every request is checked against dbo.GpsOfficerSession.
+    /// False skips the check (sessions are still recorded) - a switch for rollout, so the
+    /// one-time re-sign-in after deploy can be timed.
+    /// </summary>
+    public bool SingleDeviceSessions { get; init; } = true;
+}
+
+public sealed class SurveyOptions
+{
+    public const string Section = "Survey";
+
+    /// <summary>
+    /// A Mixed plot's commercial and residential extents must each be at least this share
+    /// of the site area, in percent (user, 2026-10-28). Sent to the phone with every ward
+    /// sync, and checked again on submit. Set it in the server's appsettings.json
+    /// (Survey:MinMixedExtentPercent) and recycle the app pool; 0 means only "above 0".
+    /// </summary>
+    [Range(0, 50)] public double MinMixedExtentPercent { get; init; } = 5;
+
+    /// <summary>
+    /// How many completed surveys may wait on a phone for a sync (the Completed tab, not yet
+    /// uploaded). Sent to the phone with every ward sync; the phone refuses to complete another
+    /// once this many are waiting.
+    /// </summary>
+    [Range(1, 50)] public int MaxCompletedOffline { get; init; } = 5;
+
+    /// <summary>
+    /// How many applications one RI may hold (Pending) at once. Passed to
+    /// USP_IU_Architect_AssignedApp as @MaxPending - only once db/45 has given it that
+    /// parameter; before that the procedure's own 2 applies.
+    /// </summary>
+    [Range(1, 20)] public int MaxAllottedPerOfficer { get; init; } = 2;
 }
 
 public sealed class OtpOptions
@@ -57,9 +101,10 @@ public sealed class OtpOptions
 
     /// <summary>
     /// The role the mobile app signs in as. USP_S_ValidateOfficer matches on role as well as
-    /// mobile number, so this has to be right: 116 is the ward-level case worker (the RI).
+    /// mobile number, so this has to be right: 117 is the RI (Mst_Roles, UDD_MASTERDB). 116,
+    /// the case worker, is the other ward-scoped role and is treated the same everywhere.
     /// </summary>
-    [Range(1, 9999)] public int DefaultRoleId { get; init; } = 116;
+    [Range(1, 9999)] public int DefaultRoleId { get; init; } = 117;
 
     /// <summary>
     /// Development: logs the code AND returns it in the reply (local use only).

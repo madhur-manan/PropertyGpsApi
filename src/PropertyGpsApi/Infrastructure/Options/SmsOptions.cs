@@ -3,13 +3,24 @@ using System.ComponentModel.DataAnnotations;
 namespace PropertyGpsApi.Infrastructure.Options;
 
 /// <summary>
-/// BBMP's SMS gateway, matching the wire protocol already in production in LayoutKhataAPI
-/// (clsSendOtp). Every value here is a credential or a DLT registration detail, so all of
-/// them come from user-secrets or environment variables - never from appsettings.json.
+/// BBMP's SMS gateway. Every value here is a credential or a DLT registration detail, so all
+/// of them come from user-secrets or environment variables - never from appsettings.json.
 /// </summary>
 public sealed class SmsOptions
 {
     public const string Section = "Sms";
+
+    /// <summary>
+    /// The protocol of the gateway in ApiUrl - the two in use at BBMP differ on the wire:
+    /// "Mgov" as LayoutKhataAPI's clsSendOtp speaks it (password as SHA-1, a SHA-512 key over
+    /// the message), and "SmsMobile" for smsmobile1.karnataka.gov.in as B2A_WEBAPI's
+    /// clSendSMS speaks it (password as given, the service key DES-encrypted).
+    /// </summary>
+    [RegularExpression("^(Mgov|SmsMobile)$", ErrorMessage = "Sms:Protocol must be Mgov or SmsMobile.")]
+    public string Protocol { get; init; } = Mgov;
+
+    public const string Mgov = "Mgov";
+    public const string SmsMobile = "SmsMobile";
 
     [Required(AllowEmptyStrings = false)] public string ApiUrl { get; init; } = "";
     [Required(AllowEmptyStrings = false)] public string Username { get; init; } = "";
@@ -34,9 +45,12 @@ public sealed class SmsOptions
         "Your OTP for logging in to the {#var1#} is {#var2#}. Please do not share this OTP with anyone. Regards - BBMP";
 
     [Required(AllowEmptyStrings = false)]
-    public string ApplicationName { get; init; } = "Single Plot GPS Application";
+    public string ApplicationName { get; init; } = "BtoA Application";
 
-    /// <summary>The gateway answers with a comma-separated string whose first field is 402 on success.</summary>
+    /// <summary>
+    /// Both gateways answer with a comma-separated string whose first field is 402 on success
+    /// ("402,MsgID = ..."); for SmsMobile confirmed on the test server on 2026-10-12.
+    /// </summary>
     public string SuccessCode { get; init; } = "402";
 
     [Range(1, 120)] public int TimeoutSeconds { get; init; } = 20;

@@ -16,12 +16,16 @@ namespace PropertyGpsApi.Tests;
 /// </summary>
 public sealed class RoadSetValidationTests
 {
-    private const int RevenueInspector = 116;
-    private const int Ward = 54;
+    private const int RevenueInspector = 117;
+    private const int Ulb = 1;
+    private const string Ward = "54";
+
+    // The wards mapped to the officer, as IOfficerService.MappedWardsAsync gives them.
+    private static readonly Jurisdiction[] OwnWards = [new() { UlbCode = Ulb, WardNumber = Ward }];
 
     // Validate() reads nothing from the database, so no connection is needed.
     private static readonly VerificationSubmitService Service = new(
-        null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
+        null!, null!, Options.Create(new StoredProcedureOptions()), NullLogger<VerificationSubmitService>.Instance);
 
     private static SubmitRoadDetail Road(
         string? roadId = "618", int status = 0, int? rowId = 106518, int publicList = 1) => new()
@@ -37,7 +41,8 @@ public sealed class RoadSetValidationTests
     {
         ApplicationId = "202601010000001",
         Epid = "1000000001",
-        WardId = Ward,
+        UlbCode = Ulb,
+        WardNumber = Ward,
         PropertyLandExists = 1,
         IsAllBhoomiSurveyNosCorrect = 1,
         SiteDetails = new SubmitSiteDetails
@@ -52,7 +57,7 @@ public sealed class RoadSetValidationTests
     {
         try
         {
-            Service.Validate(request, RevenueInspector, Ward);
+            Service.Validate(request, RevenueInspector, OwnWards);
             return [];
         }
         catch (SubmitRejectedException e)
@@ -166,7 +171,8 @@ public sealed class RoadSetValidationTests
         {
             ApplicationId = request.ApplicationId,
             Epid = request.Epid,
-            WardId = Ward,
+            UlbCode = Ulb,
+            WardNumber = Ward,
             PropertyLandExists = 1,
             IsAllBhoomiSurveyNosCorrect = 1,
             SiteDetails = null!,
@@ -183,7 +189,8 @@ public sealed class RoadSetValidationTests
         {
             ApplicationId = request.ApplicationId,
             Epid = request.Epid,
-            WardId = Ward,
+            UlbCode = Ulb,
+            WardNumber = Ward,
             PropertyLandExists = 1,
             IsAllBhoomiSurveyNosCorrect = 1,
             SiteDetails = new SubmitSiteDetails { IsCornerPlot = 0, RoadFacingSides = 1, RoadDetails = null! },

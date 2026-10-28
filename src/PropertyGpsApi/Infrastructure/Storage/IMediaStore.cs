@@ -43,6 +43,15 @@ public interface IMediaStore
     /// so the endpoint never answers the question "does this EPID exist".
     /// </summary>
     Task<StoredFile?> OpenAsync(string epid, string fileName, CancellationToken ct);
+
+    /// <summary>
+    /// Removes files this store saved, named by the URLs <see cref="SaveAsync"/> returned.
+    /// For a survey that failed before anything pointed at them; every retry otherwise left
+    /// another copy of each photograph behind. Never throws: it runs while another error is
+    /// on its way to the caller, and must not replace it. A URL this store did not issue is
+    /// skipped.
+    /// </summary>
+    Task DiscardAsync(IEnumerable<string> urls, CancellationToken ct);
 }
 
 /// <summary>A stored file on its way back out. Bytes rather than a stream because the

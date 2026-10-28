@@ -7,6 +7,20 @@ public static class ApiErrorCodes
     public const string BadRequest = "BAD_REQUEST";
     public const string ValidationFailed = "VALIDATION_FAILED";
     public const string AuthRequired = "UNAUTHENTICATED";
+
+    /// <summary>
+    /// This phone's session is no longer the officer's current one (released by an
+    /// administrator, or replaced by a new sign-in on the same phone). Sent as
+    /// errors[0].code on a 401 whose envelope code stays UNAUTHENTICATED, so installed
+    /// apps still sign out.
+    /// </summary>
+    public const string SessionReplaced = "SESSION_REPLACED";
+
+    /// <summary>Sign-in refused: the account is bound to another phone (422).</summary>
+    public const string SignedInElsewhere = "SIGNED_IN_ELSEWHERE";
+
+    /// <summary>Sign-in refused: the app sent no phone id (a build before 1.1.0) (422).</summary>
+    public const string DeviceUnknown = "DEVICE_UNKNOWN";
     public const string Forbidden = "FORBIDDEN";
     public const string NotFound = "NOT_FOUND";
     public const string TooManyRequests = "RATE_LIMITED";
@@ -28,6 +42,8 @@ public static class ApiErrorCodes
 
     public const string ApplicationNotFound = "APPLICATION_NOT_FOUND";
     public const string NotAssignedToYou = "NOT_ASSIGNED_TO_YOU";
+    // QC or JC has acted on it, or another officer has already submitted it (N2).
+    public const string ApplicationClosed = "APPLICATION_CLOSED";
     public const string RoadNotRecognised = "ROAD_NOT_RECOGNISED";
     public const string UnknownRoadRow = "UNKNOWN_ROAD_ROW";
     public const string DeclaredRoadNotAnswered = "DECLARED_ROAD_NOT_ANSWERED";

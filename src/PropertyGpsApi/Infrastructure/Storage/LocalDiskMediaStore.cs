@@ -63,6 +63,56 @@ internal sealed class LocalDiskMediaStore(
     /// </summary>
     public async Task<StoredFile?> OpenAsync(string epid, string fileName, CancellationToken ct)
     {
+        var absolute = Resolve(epid, fileName);
+        if (absolute is null || !File.Exists(absolute)) return null;
+
+        var content = await File.ReadAllBytesAsync(absolute, ct);
+        return new StoredFile(fileName, ContentTypeFor(Path.GetExtension(absolute)), content);
+    }
+
+    /// <summary>
+    /// The URL is taken apart rather than trusted: only its last two segments are used, and
+    /// they go through the same name pattern and root check as a read, so a URL that is not
+    /// one of ours can never delete anything.
+    /// </summary>
+    public Task DiscardAsync(IEnumerable<string> urls, CancellationToken ct)
+    {
+        foreach (var url in urls.Distinct(StringComparer.Ordinal))
+        {
+            try
+            {
+                var segments = Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                    ? uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+                    : [];
+                var absolute = segments.Length >= 2
+                    ? Resolve(Uri.UnescapeDataString(segments[^2]), Uri.UnescapeDataString(segments[^1]))
+                    : null;
+
+                if (absolute is null)
+                {
+                    logger.LogWarning("Not discarding {Url}: this store did not issue it", url);
+                    continue;
+                }
+
+                if (File.Exists(absolute))
+                {
+                    File.Delete(absolute);
+                    logger.LogInformation("Discarded {Name}: its survey was not saved", Path.GetFileName(absolute));
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Left for the sweeper. The survey's own error is what the caller must see.
+                logger.LogWarning(e, "Could not discard {Url}", url);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The file's place under the root, or null for a name this store never generates.</summary>
+    private string? Resolve(string epid, string fileName)
+    {
         if (!SafeName.IsMatch(fileName)) return null;
 
         var root = Path.GetFullPath(options.Value.RootPath);
@@ -74,10 +124,7 @@ internal sealed class LocalDiskMediaStore(
             return null;
         }
 
-        if (!File.Exists(absolute)) return null;
-
-        var content = await File.ReadAllBytesAsync(absolute, ct);
-        return new StoredFile(fileName, ContentTypeFor(Path.GetExtension(absolute)), content);
+        return absolute;
     }
 
     /// <summary>Matches exactly what BuildName produces and nothing else.</summary>
