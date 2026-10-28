@@ -9,53 +9,56 @@ using PropertyGpsApi.Services;
 namespace PropertyGpsApi.Controllers;
 
 /// <summary>
-/// Zone and ward pickers. The app needs these because USP_S_Officer_ValidateOTP returns
-/// ward names but no ward ids, so a jurisdiction from sign-in cannot on its own be turned
-/// into a fetch request.
+/// ULB, ward and road pickers. Property GPS works by ULB + ward number, so "zones" now lists
+/// ULBs and "wards" a ULB's wards by number; the routes are kept for older callers. The app
+/// itself takes its wards from sign-in and asks here only for a ward's roads.
 /// </summary>
 [ApiController]
 [Route(ApiRoutes.Base + "/masters")]
 public sealed class MastersController(IMasterService masters) : ControllerBase
 {
+    /// <summary>The ULBs, of one district when districtCode is given.</summary>
     [HttpGet("zones")]
-    [ProducesResponseType<ApiResponse<IReadOnlyList<ZoneDto>>>(StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<ZoneDto>>>> Zones(
-        [FromQuery] int corporationId, CancellationToken ct)
+    [ProducesResponseType<ApiResponse<IReadOnlyList<UlbDto>>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<UlbDto>>>> Zones(
+        [FromQuery] int? districtCode, CancellationToken ct)
     {
-        if (corporationId <= 0)
-            throw ApiException.BadRequest("corporationId is required.");
+        if (districtCode is <= 0)
+            throw ApiException.BadRequest("districtCode must be a positive number when given.");
 
-        var zones = await masters.ZonesAsync(corporationId, ct);
-        return Ok(ApiResponse<IReadOnlyList<ZoneDto>>.Ok(zones));
+        var ulbs = await masters.UlbsAsync(districtCode, ct);
+        return Ok(ApiResponse<IReadOnlyList<UlbDto>>.Ok(ulbs));
     }
 
+    /// <summary>The wards of one ULB, by ward number.</summary>
     [HttpGet("wards")]
     [ProducesResponseType<ApiResponse<IReadOnlyList<WardDto>>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<WardDto>>>> Wards(
-        [FromQuery] int zoneId, CancellationToken ct)
+        [FromQuery] int ulbCode, CancellationToken ct)
     {
-        if (zoneId <= 0)
-            throw ApiException.BadRequest("zoneId is required.");
+        if (ulbCode <= 0)
+            throw ApiException.BadRequest("ulbCode is required.");
 
-        var wards = await masters.WardsAsync(zoneId, ct);
+        var wards = await masters.WardsAsync(ulbCode, ct);
         return Ok(ApiResponse<IReadOnlyList<WardDto>>.Ok(wards));
     }
 
     /// <summary>
-    /// The ward's KSRSAC roads, for the road pickers on the survey form: streetId is the
-    /// MstRoadKSRAC Road_ID and streetName its Road_Name, the pair the submit sends back as
-    /// roadId / roadName (see StreetDto).
+    /// The ward's roads, for the road pickers on the survey form: streetId and streetName are
+    /// the pair the submit sends back as roadId / roadName (see StreetDto). The ward number is
+    /// text, URL-encoded.
     /// </summary>
     [HttpGet("streets")]
     [ProducesResponseType<ApiResponse<IReadOnlyList<StreetDto>>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<StreetDto>>>> Streets(
-        [FromQuery] int corporationId, [FromQuery] int zoneId, [FromQuery] int wardId,
+        [FromQuery] int ulbCode, [FromQuery] string? wardNumber,
         CancellationToken ct)
     {
-        if (corporationId <= 0 || zoneId <= 0 || wardId <= 0)
-            throw ApiException.BadRequest("corporationId, zoneId and wardId are all required.");
+        if (ulbCode <= 0 || !WardNumbers.IsValid(wardNumber))
+            throw ApiException.BadRequest(
+                $"ulbCode and wardNumber (at most {WardNumbers.MaxLength} characters) are both required.");
 
-        var streets = await masters.StreetsAsync(corporationId, zoneId, wardId, ct);
+        var streets = await masters.StreetsAsync(ulbCode, WardNumbers.Clean(wardNumber)!, ct);
 
         return Ok(ApiResponse<IReadOnlyList<StreetDto>>.Ok(
             streets,

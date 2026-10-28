@@ -13,9 +13,9 @@ public sealed class SubmitRoadDetail
     [JsonPropertyName("roadRowId")] public int? RoadRowId { get; init; }
 
     /// <summary>
-    /// A KSRSAC Road_ID (the street list's streetId), as a string so it can also hold the
-    /// sentinel "999", meaning the road is not in the public list. Must parse as an int
-    /// when present.
+    /// The street list's streetId, or the sentinel "999", meaning the road is not in the
+    /// public list. Any text of at most 50 characters (the procedure's NVARCHAR(50)); it is
+    /// sent as given, trimmed, never parsed as a number.
     /// </summary>
     [JsonPropertyName("roadId")] public string? RoadId { get; init; }
 

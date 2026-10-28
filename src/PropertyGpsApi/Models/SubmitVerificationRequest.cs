@@ -23,8 +23,17 @@ public sealed class SubmitVerificationRequest
     [JsonPropertyName("epid")] public string Epid { get; init; } = "";
 
     [JsonPropertyName("sasId")] public string? SasId { get; init; }
-    [JsonPropertyName("zoneId")] public int ZoneId { get; init; }
-    [JsonPropertyName("wardId")] public int WardId { get; init; }
+
+    /// <summary>
+    /// The application's ULB and ward number, as the ward sync delivered them. A ward officer
+    /// (116/117) may only submit for one of the wards mapped to them; checked on these two.
+    /// </summary>
+    [JsonPropertyName("ulbCode")] public int UlbCode { get; init; }
+    [JsonPropertyName("wardNumber")] public string? WardNumber { get; init; }
+
+    // Older builds sent these. Accepted and ignored: Property GPS works by ULB + ward number.
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
     [JsonPropertyName("singleSiteId")] public int? SingleSiteId { get; init; }
     [JsonPropertyName("applicationType")] public string? ApplicationType { get; init; }
 

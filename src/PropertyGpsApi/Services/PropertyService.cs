@@ -1,6 +1,7 @@
 using System.Data;
 using Dapper;
 using Microsoft.Extensions.Options;
+using PropertyGpsApi.Common;
 using PropertyGpsApi.Models;
 using PropertyGpsApi.Infrastructure.Data;
 using PropertyGpsApi.Infrastructure.Options;
@@ -40,12 +41,15 @@ internal sealed class PropertyService(
         FetchApplicationsRequest request,
         long officerId,
         int roleId,
-        long? officerWardId,
+        IReadOnlyCollection<Jurisdiction>? officerWards,
         CancellationToken ct)
     {
-        JurisdictionRules.RequireOwnWard(
-            roleId, officerWardId, request.WardId,
-            "You can only view applications for your own ward.");
+        // The procedure behind this route filters on GBA zone and ward ids, which UDD does not
+        // have and which no ULB + ward check can vouch for - a ward officer could name their own
+        // ULB + ward and read another zone's applications. Ward officers use the ward sync.
+        if (JurisdictionRules.IsWardScoped(roleId))
+            throw ApiException.Forbidden(
+                "This version of the app is out of date. Please update it.", ApiErrorCodes.Forbidden);
 
         var p = new DynamicParameters();
         p.Add("@AppID", RowLimit, DbType.Int32);

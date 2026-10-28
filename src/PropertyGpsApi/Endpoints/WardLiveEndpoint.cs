@@ -4,13 +4,15 @@ using System.Security.Claims;
 using PropertyGpsApi.Common;
 using PropertyGpsApi.Infrastructure.Security;
 using PropertyGpsApi.Interfaces;
+using PropertyGpsApi.Models;
 using PropertyGpsApi.Services;
 
 namespace PropertyGpsApi.Endpoints;
 
 /// <summary>
-/// GET .../propertyinfo/ward-sync/live?zoneId=&amp;wardId= - a WebSocket the phone keeps open
-/// while it shows a ward's property list. The server only pushes:
+/// GET .../propertyinfo/ward-sync/live?ulbCode=&amp;wardNumber= - a WebSocket the phone keeps
+/// open while it shows a ward's property list. The ward number is text (URL-encoded), matched
+/// trimmed and ignoring case. The server only pushes:
 /// <c>{"type":"holders","holders":[{"appId":12,"assignedToUserId":11333}]}</c>, the shape the
 /// pull-down already reads, after every allot or unassign accepted in that ward
 /// (ApplicationService). Anything the phone sends is ignored, apart from closing.
@@ -52,16 +54,16 @@ internal static class WardLiveEndpoint
                 "This address takes a WebSocket connection.");
             return;
         }
-        if (!TryReadWard(http.Request.Query, out var zoneId, out var wardId))
+        if (!TryReadWard(http.Request.Query, out var ulbCode, out var wardNumber))
         {
             await ErrorEnvelopeWriter.WriteAsync(http, StatusCodes.Status400BadRequest, ApiErrorCodes.BadRequest,
-                "zoneId and wardId are required.");
+                "ulbCode and wardNumber are required.");
             return;
         }
 
         var officerId = http.User.RequireLong(GpsClaims.UserId);
         var wards = await services.GetRequiredService<IOfficerService>().MappedWardsAsync(officerId, ct);
-        if (!WardSyncService.IsMapped(wards, zoneId, wardId))
+        if (!WardSyncService.IsMapped(wards, ulbCode, wardNumber))
         {
             await ErrorEnvelopeWriter.WriteAsync(http, StatusCodes.Status403Forbidden, ApiErrorCodes.OutsideJurisdiction,
                 "This ward is not mapped to you.");
@@ -75,7 +77,7 @@ internal static class WardLiveEndpoint
         var lifetime = services.GetRequiredService<IHostApplicationLifetime>();
 
         using var socket = await http.WebSockets.AcceptWebSocketAsync();
-        var connection = hub.Add(zoneId, wardId, officerId, socket);
+        var connection = hub.Add(ulbCode, wardNumber, officerId, socket);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var watch = WatchSessionAsync(http.User, connection, scopes, clock, logger, stop.Token);
         // An open socket is a request in flight, and the server waits for those before it stops.
@@ -97,11 +99,16 @@ internal static class WardLiveEndpoint
         }
     }
 
-    internal static bool TryReadWard(IQueryCollection query, out int zoneId, out int wardId)
+    /// <summary>
+    /// ulbCode a positive number, wardNumber 1 to 20 characters once trimmed (the query string
+    /// arrives already URL-decoded). The ward comes back trimmed.
+    /// </summary>
+    internal static bool TryReadWard(IQueryCollection query, out int ulbCode, out string wardNumber)
     {
-        wardId = 0;
-        return int.TryParse(query["zoneId"], out zoneId) && zoneId > 0
-            && int.TryParse(query["wardId"], out wardId) && wardId > 0;
+        var ward = query["wardNumber"].ToString();
+        wardNumber = WardNumbers.Clean(ward) ?? "";
+        return int.TryParse(query["ulbCode"], out ulbCode) && ulbCode > 0
+            && WardNumbers.IsValid(ward);
     }
 
     /// <summary>
@@ -141,8 +148,8 @@ internal static class WardLiveEndpoint
             if (EndOf(check, ExpiresAt(user), clock.GetUtcNow(), mapped) is not { } end) continue;
 
             logger.LogInformation(
-                "Ward live: closing officer {OfficerId}'s socket in {Zone}/{Ward}: {Reason} ({Check})",
-                connection.OfficerId, connection.ZoneId, connection.WardId, end.Reason, check);
+                "Ward live: closing officer {OfficerId}'s socket in {Ulb}/{Ward}: {Reason} ({Check})",
+                connection.OfficerId, connection.UlbCode, connection.WardNumber, end.Reason, check);
             await connection.EndAsync(end.Status, end.Reason, WardLiveConnection.CloseGrace, ct);
             return;
         }
@@ -155,7 +162,7 @@ internal static class WardLiveEndpoint
         try
         {
             var wards = await services.GetRequiredService<IOfficerService>().MappedWardsAsync(connection.OfficerId, ct);
-            return WardSyncService.IsMapped(wards, connection.ZoneId, connection.WardId);
+            return WardSyncService.IsMapped(wards, connection.UlbCode, connection.WardNumber);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -45,6 +45,19 @@ public sealed class AuthOptions
     public bool SingleDeviceSessions { get; init; } = true;
 }
 
+public sealed class SurveyOptions
+{
+    public const string Section = "Survey";
+
+    /// <summary>
+    /// A Mixed plot's commercial and residential extents must each be at least this share
+    /// of the site area, in percent (user, 2026-10-28). Sent to the phone with every ward
+    /// sync, and checked again on submit. Set it in the server's appsettings.json
+    /// (Survey:MinMixedExtentPercent) and recycle the app pool; 0 means only "above 0".
+    /// </summary>
+    [Range(0, 50)] public double MinMixedExtentPercent { get; init; } = 5;
+}
+
 public sealed class OtpOptions
 {
     public const string Section = "Otp";
@@ -74,9 +87,10 @@ public sealed class OtpOptions
 
     /// <summary>
     /// The role the mobile app signs in as. USP_S_ValidateOfficer matches on role as well as
-    /// mobile number, so this has to be right: 116 is the ward-level case worker (the RI).
+    /// mobile number, so this has to be right: 117 is the RI (Mst_Roles, UDD_MASTERDB). 116,
+    /// the case worker, is the other ward-scoped role and is treated the same everywhere.
     /// </summary>
-    [Range(1, 9999)] public int DefaultRoleId { get; init; } = 116;
+    [Range(1, 9999)] public int DefaultRoleId { get; init; } = 117;
 
     /// <summary>
     /// Development: logs the code AND returns it in the reply (local use only).

@@ -22,8 +22,17 @@ public sealed class PropertyInfoController(
     IPushStatusService pushStatus,IVerificationSubmitService submissions,
     ISubmitMediaService mediaBinder,IMediaStore mediaStore,
     IMediaAccessService mediaAccess,IHistoryService history,
+    IOfficerService officers,
     ILogger<PropertyInfoController> logger) : ControllerBase
 {
+    /// <summary>
+    /// The wards a ward officer (116/117) may act in: every ward mapped to them, read from
+    /// the master tables - the token carries only the first, which refused a two-ward
+    /// officer their second. Null for other roles, whom the ward rule does not limit.
+    /// </summary>
+    private async Task<IReadOnlyList<Jurisdiction>?> OfficerWardsAsync(long officerId, int roleId, CancellationToken ct) =>
+        JurisdictionRules.IsWardScoped(roleId) ? await officers.MappedWardsAsync(officerId, ct) : null;
+
     /// <summary>
     /// Step 3: the officer's ward worklist, which the app stores in SQLite for offline use.
     /// </summary>
@@ -33,10 +42,9 @@ public sealed class PropertyInfoController(
         [FromBody] FetchApplicationsRequest request, CancellationToken ct)
     {
         var officerId = User.RequireLong(GpsClaims.UserId);
-        var ownWard = User.OptionalLong(GpsClaims.WardId);
         var roleId = (int)User.RequireLong(GpsClaims.RoleId);
         var results = await properties.FetchAsync(
-            request, officerId, roleId, ownWard, ct);
+            request, officerId, roleId, await OfficerWardsAsync(officerId, roleId, ct), ct);
 
         return Ok(ApiResponse<IReadOnlyList<PropertyDto>>.Ok(
             results,
@@ -128,6 +136,7 @@ public sealed class PropertyInfoController(
         var mobile = User.FindFirstValue(GpsClaims.Mobile);
 
         var request = ParsePayload(payload);
+        var wards = await OfficerWardsAsync(officerId, roleId, ct);
 
         // Files are stored before the transaction opens and are never rolled back. An
         // orphaned file costs disk; a committed row pointing at a photograph that was never
@@ -137,7 +146,7 @@ public sealed class PropertyInfoController(
             // Validation runs before any file is written, and inside the try so that a
             // rejected answer and a rejected road return the same shape - both are
             // permanent for this payload and both are fixable by the officer.
-            submissions.Validate(request, roleId, User.OptionalLong(GpsClaims.WardId));
+            submissions.Validate(request, roleId, wards);
 
             var mediaUrls = await mediaBinder.StoreAsync(request, Request.Form.Files, ct);
 
@@ -202,8 +211,8 @@ public sealed class PropertyInfoController(
         var scope = await mediaAccess.ScopeForAsync(epid, ct);
         var mayView = scope is not null && JurisdictionRules.MayViewMedia(
             roleId,
-            User.OptionalLong(GpsClaims.WardId),
-            User.OptionalLong(GpsClaims.ZoneId),
+            await OfficerWardsAsync(User.RequireLong(GpsClaims.UserId), roleId, ct),
+            User.OptionalLong(GpsClaims.UlbCode),
             scope);
         if (!mayView) return FileNotFound();
 

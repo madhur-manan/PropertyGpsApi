@@ -21,8 +21,12 @@ namespace PropertyGpsApi.Tests;
 /// </summary>
 public sealed class RoadFlowValidationTests
 {
-    private const int RevenueInspector = 116;
-    private const int Ward = 54;
+    private const int RevenueInspector = 117;
+    private const int Ulb = 1;
+    private const string Ward = "54";
+
+    // The wards mapped to the officer, as IOfficerService.MappedWardsAsync gives them.
+    private static readonly Jurisdiction[] OwnWards = [new() { UlbCode = Ulb, WardNumber = Ward }];
 
     private const string Required = "This answer is needed before the survey can be submitted.";
 
@@ -68,7 +72,8 @@ public sealed class RoadFlowValidationTests
     {
         ApplicationId = applicationId,
         Epid = "9990000001",
-        WardId = Ward,
+        UlbCode = Ulb,
+        WardNumber = Ward,
         PropertyLandExists = 1,
         IsAllBhoomiSurveyNosCorrect = 1,
         SiteDetails = new SubmitSiteDetails
@@ -85,7 +90,7 @@ public sealed class RoadFlowValidationTests
     {
         try
         {
-            Service.Validate(request, RevenueInspector, Ward);
+            Service.Validate(request, RevenueInspector, OwnWards);
             return [];
         }
         catch (SubmitRejectedException e)
@@ -462,7 +467,8 @@ public sealed class RoadFlowValidationTests
         {
             ApplicationId = "",
             Epid = "9990000001",
-            WardId = Ward,
+            UlbCode = Ulb,
+            WardNumber = Ward,
             PropertyLandExists = 1,
             IsAllBhoomiSurveyNosCorrect = 1,
             SiteDetails = null!,
@@ -478,7 +484,8 @@ public sealed class RoadFlowValidationTests
             {
                 ApplicationId = "TESTAPP0001",
                 Epid = "9990000001",
-                WardId = Ward,
+                UlbCode = Ulb,
+                WardNumber = Ward,
                 PropertyLandExists = 1,
                 IsAllBhoomiSurveyNosCorrect = 1,
                 SiteDetails = new SubmitSiteDetails { IsCornerPlot = 0, RoadFacingSides = 1, RoadDetails = null! },
@@ -504,8 +511,52 @@ public sealed class RoadFlowValidationTests
     public void A_ward_officer_submitting_for_another_ward_is_forbidden_before_any_road_rule()
     {
         var ex = Assert.Throws<ApiException>(() =>
-            Service.Validate(Survey(0, 1), RevenueInspector, officerWardId: Ward + 1));
+            Service.Validate(Survey(0, 1), RevenueInspector,
+                officerWards: [new Jurisdiction { UlbCode = Ulb, WardNumber = "55" }]));
 
         Assert.Equal(ApiErrorCodes.OutsideJurisdiction, ex.Code);
+    }
+
+    /// <summary>
+    /// A two-ward RI submits for their second ward: the check is against every mapped ward,
+    /// not the token's single one, and the ward number matches trimmed, ignoring case.
+    /// </summary>
+    [Fact]
+    public void A_ward_officer_may_submit_for_any_ward_mapped_to_them()
+    {
+        Jurisdiction[] twoWards =
+        [
+            new() { UlbCode = 7, WardNumber = "12A" },
+            new() { UlbCode = Ulb, WardNumber = Ward }
+        ];
+
+        var survey = Survey(0, 1, Declared(91141, "999", "Test Unlisted Road", "public", 0, caps: true));
+
+        Service.Validate(survey, RevenueInspector, twoWards);
+        Service.Validate(survey, 116, twoWards);
+    }
+
+    /// <summary>The same ward number in another ULB is another ward.</summary>
+    [Fact]
+    public void The_same_ward_number_in_another_ulb_is_forbidden()
+    {
+        var ex = Assert.Throws<ApiException>(() =>
+            Service.Validate(Survey(0, 1), RevenueInspector, [new Jurisdiction { UlbCode = Ulb + 1, WardNumber = Ward }]));
+
+        Assert.Equal(ApiErrorCodes.OutsideJurisdiction, ex.Code);
+    }
+
+    /// <summary>
+    /// The road id is the street list's text, whatever it holds: a non-numeric one is
+    /// accepted (it used to have to be a number), and only one over 50 characters - the
+    /// procedure's NVARCHAR(50) - is refused.
+    /// </summary>
+    [Fact]
+    public void A_non_numeric_road_id_is_accepted_and_only_an_overlong_one_refused()
+    {
+        Assert.Empty(ErrorsFor(Survey(0, 1, Declared(91081, "KA-RD/0012a", "Bile Shivale", status: 1))));
+
+        var errors = ErrorsFor(Survey(0, 1, Declared(91081, new string('7', 51), "Bile Shivale", status: 1)));
+        Assert.Equal("siteDetails.roadDetails[0].roadId", Assert.Single(errors).Field);
     }
 }

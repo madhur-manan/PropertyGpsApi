@@ -85,7 +85,7 @@ internal static class EarlierSurveyReader
                        AND ISNULL(o.UDte, o.CDte) > ISNULL(@prevSubmitOn, '19000101')))
         )
         SELECT RowId = r.Ofcr_RowId, r.RoadRowId, IsAdded = CASE WHEN r.Ofcr_SiteRoadRowID IS NULL THEN 1 ELSE 0 END,
-               RoadId = r.Ofcr_RoadId, RoadName = r.Ofcr_RoadName, ActualRoadName = r.Ofcr_ActualRoadName,
+               RoadId = CAST(r.Ofcr_RoadId AS nvarchar(50)), RoadName = r.Ofcr_RoadName, ActualRoadName = r.Ofcr_ActualRoadName,
                RoadType = r.Ofcr_RoadType, r.InPublicList,
                TypeId = r.Ofcr_Correction_Type_Id, TypeValue = r.Ofcr_Correction_Type_Value, r.Corrected
         FROM r
@@ -96,7 +96,7 @@ internal static class EarlierSurveyReader
         -- officer), never made them inactive, and left earlier sends active beside later ones.
         -- Its newest send: the rows within two minutes of its newest row.
         SELECT RowId = o.Ofcr_RowId, SiteRoadRowId = o.Ofcr_SiteRoadRowID,
-               RoadId = o.Ofcr_RoadId, RoadName = o.Ofcr_RoadName, ActualRoadName = o.Ofcr_ActualRoadName,
+               RoadId = CAST(o.Ofcr_RoadId AS nvarchar(50)), RoadName = o.Ofcr_RoadName, ActualRoadName = o.Ofcr_ActualRoadName,
                RoadType = o.Ofcr_RoadType, InPublicList = CAST(o.Ofcr_IsPresentInPublicRoadList AS int),
                TypeId = o.Ofcr_Correction_Type_Id, TypeValue = o.Ofcr_Correction_Type_Value,
                Corrected = CAST(o.Ofcr_Corrected_Road_Details AS int)
@@ -108,7 +108,7 @@ internal static class EarlierSurveyReader
         ORDER BY o.CDte DESC, o.Ofcr_RowId DESC;
 
         -- The application's declared roads, as the phone builds its road cards from them.
-        SELECT RoadRowId = d.Rd_RoadRow_ID, RoadId = d.Rd_RoadId
+        SELECT RoadRowId = d.Rd_RoadRow_ID, RoadId = CAST(d.Rd_RoadId AS nvarchar(50))
         FROM dbo.BtoA_SiteRoadDetails d WITH (NOLOCK)
         WHERE d.Rd_App_Id = @appId AND ISNULL(d.Rd_RoadActive, 1) = 1;
         """;
@@ -142,12 +142,14 @@ internal static class EarlierSurveyReader
         public long? LastWriter { get; init; }
     }
 
+    // Road ids are text (the procedure's @BtoA_RoadId is NVARCHAR(50)); the query CASTs every
+    // one, so a column still holding ints reads the same way.
     internal sealed class RoadRow
     {
         public int RowId { get; init; }
         public int? RoadRowId { get; init; }
         public int IsAdded { get; init; }
-        public int? RoadId { get; init; }
+        public string? RoadId { get; init; }
         public string? RoadName { get; init; }
         public string? ActualRoadName { get; init; }
         public string? RoadType { get; init; }
@@ -161,7 +163,7 @@ internal static class EarlierSurveyReader
     {
         public int RowId { get; init; }
         public string? SiteRoadRowId { get; init; }
-        public int? RoadId { get; init; }
+        public string? RoadId { get; init; }
         public string? RoadName { get; init; }
         public string? ActualRoadName { get; init; }
         public string? RoadType { get; init; }
@@ -174,7 +176,7 @@ internal static class EarlierSurveyReader
     internal sealed class DeclaredRoad
     {
         public int RoadRowId { get; init; }
-        public int? RoadId { get; init; }
+        public string? RoadId { get; init; }
     }
 
     /// <summary>The last RI survey, or null when no RI has submitted this application.</summary>
@@ -269,7 +271,7 @@ internal static class EarlierSurveyReader
                 match = id;
             else
             {
-                var sameRoad = declared.Where(d => r.RoadId is not null && d.RoadId == r.RoadId).ToList();
+                var sameRoad = declared.Where(d => SameRoadId(d.RoadId, r.RoadId)).ToList();
                 if (sameRoad.Count == 1) match = sameRoad[0].RoadRowId;
                 else if (sameRoad.Count == 0 && declared.Count == 1) match = declared[0].RoadRowId;
             }
@@ -312,7 +314,7 @@ internal static class EarlierSurveyReader
         return new SubmitRoadDetail
         {
             RoadRowId = r.IsAdded == 1 ? null : r.RoadRowId,
-            RoadId = r.RoadId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            RoadId = VerificationSubmitService.RoadIdText(r.RoadId),
             RoadName = r.RoadName,
             ActualRoadName = r.ActualRoadName,
             RoadType = r.RoadType,
@@ -338,6 +340,11 @@ internal static class EarlierSurveyReader
             "added" or "add" => 3,
             _ => typeId is >= 0 and <= 3 ? typeId : added ? 3 : null
         };
+
+    /// <summary>Two road ids are the same road when both are present and match trimmed, ignoring case.</summary>
+    internal static bool SameRoadId(string? a, string? b) =>
+        VerificationSubmitService.RoadIdText(a) is { } x && VerificationSubmitService.RoadIdText(b) is { } y
+        && string.Equals(x, y, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>1 stored means "corrected", which is the answer No (0), and the reverse.</summary>
     internal static int? Invert(int? correctedBit) => correctedBit switch

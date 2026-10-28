@@ -12,6 +12,14 @@ public sealed class VerifyOtpResponse
     [JsonPropertyName("mobile")] public string? Mobile { get; init; }
     [JsonPropertyName("userName")] public string? UserName { get; init; }
     [JsonPropertyName("designation")] public string? Designation { get; init; }
+
+    // The first jurisdiction's ULB and ward, the pair the token carries. Null with none.
+    [JsonPropertyName("ulbCode")] public int? UlbCode { get; init; }
+    [JsonPropertyName("ulbName")] public string? UlbName { get; init; }
+    [JsonPropertyName("wardNumber")] public string? WardNumber { get; init; }
+    [JsonPropertyName("wardName")] public string? WardName { get; init; }
+
+    // Kept for older builds, which read them; always null now that there are no zones.
     [JsonPropertyName("corporationId")] public int? CorporationId { get; init; }
     [JsonPropertyName("corporationName")] public string? CorporationName { get; init; }
     [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }

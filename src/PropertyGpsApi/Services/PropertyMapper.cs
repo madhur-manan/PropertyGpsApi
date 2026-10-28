@@ -43,6 +43,12 @@ internal static class PropertyMapper
             AdditionalInfo = row.AdditionalInfo,
             ProcessingFeePaid = row.isProcessingFeePaid,
             ProcessingFee = row.ProcessingFee,
+            // The ward sync's ward; the old fetch returns none of these.
+            UlbCode = row.UlbCode,
+            UlbName = row.UlbName,
+            WardNumber = WardNumbers.Clean(row.WardNumber),
+            WardName = row.WardName,
+            // The old fetch's; the ward sync no longer returns them, so they are null there.
             ZoneId = row.ZoneId,
             ZoneName = row.GBAZoneName_En,
             WardId = row.WardId,
@@ -56,7 +62,7 @@ internal static class PropertyMapper
             SiteDetails = new SiteDetailsDto
             {
                 SiteId = row.Site_Id,
-                StreetId = row.StreetId,
+                StreetId = StreetIdOf(row),
                 RoadType = row.RoadType,
                 RoadId = row.RoadId,
                 RoadName = row.Roadname,
@@ -95,6 +101,14 @@ internal static class PropertyMapper
             QcRemarks = qcRemarks is not null && qcRemarks.TryGetValue(group.Key, out var qc) ? qc : null
         };
     }
+
+    /// <summary>
+    /// The site's street as text: the ward sync's StreetNumber (Site_StreetId as nvarchar),
+    /// else the old fetch's numeric StreetId.
+    /// </summary>
+    internal static string? StreetIdOf(PropertyRow row) =>
+        (string.IsNullOrWhiteSpace(row.StreetNumber) ? null : row.StreetNumber.Trim())
+        ?? row.StreetId?.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
     /// A road row with nothing in it: no street-master road (id empty or 0) and no name of

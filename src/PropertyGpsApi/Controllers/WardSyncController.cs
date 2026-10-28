@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using PropertyGpsApi.Common;
+using PropertyGpsApi.Infrastructure.Options;
 using PropertyGpsApi.Infrastructure.Security;
 using PropertyGpsApi.Interfaces;
 using PropertyGpsApi.Models;
@@ -14,7 +16,7 @@ namespace PropertyGpsApi.Controllers;
 [ApiController]
 [Authorize]
 [Route(ApiRoutes.Base + "/propertyinfo/ward-sync")]
-public sealed class WardSyncController(IWardSyncService wardSync) : ControllerBase
+public sealed class WardSyncController(IWardSyncService wardSync, IOptions<SurveyOptions> survey) : ControllerBase
 {
     /// <summary>
     /// The next batch (up to 100 applications) this phone lacks in one of the officer's
@@ -26,6 +28,7 @@ public sealed class WardSyncController(IWardSyncService wardSync) : ControllerBa
         [FromBody] WardSyncRequest request, CancellationToken ct)
     {
         var result = await wardSync.PageAsync(request, User.RequireLong(GpsClaims.UserId), ct);
+        result.MinMixedExtentPercent = survey.Value.MinMixedExtentPercent;
 
         return Ok(ApiResponse<WardSyncResponse>.Ok(
             result,

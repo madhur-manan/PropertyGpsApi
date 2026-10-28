@@ -21,12 +21,13 @@ public interface IVerificationSubmitService
     /// so the officer gets every fault at once rather than one per round trip.
     /// </summary>
     /// <summary>
-    /// Also enforces that a ward officer only submits for their own ward - the
-    /// same rule as fetch, because the token says who you are, not what you may
-    /// write to. Checked here rather than at the edge so both callers of the
-    /// rule share one implementation.
+    /// Also enforces that a ward officer only submits for one of their own wards -
+    /// the same rule as fetch, because the token says who you are, not what you
+    /// may write to. Checked here rather than at the edge so both callers of the
+    /// rule share one implementation. <paramref name="officerWards"/> is every ward
+    /// mapped to a ward officer (IOfficerService.MappedWardsAsync), null for other roles.
     /// </summary>
-    void Validate(SubmitVerificationRequest request, int roleId, long? officerWardId);
+    void Validate(SubmitVerificationRequest request, int roleId, IReadOnlyCollection<Jurisdiction>? officerWards);
 
     Task<SubmitVerificationResponse> SubmitAsync(SubmitVerificationRequest request,IReadOnlyDictionary<string, string> mediaUrls,long officerId,int roleId,string? officerMobile,CancellationToken ct);
 }

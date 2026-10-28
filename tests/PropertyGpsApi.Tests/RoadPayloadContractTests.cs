@@ -51,7 +51,8 @@ public sealed class RoadPayloadContractTests
         {
           "applicationId": "TESTAPP0001",
           "epid": "9990000001",
-          "wardId": 54,
+          "ulbCode": 1,
+          "wardNumber": "54",
           "propertyLandExists": 1,
           "isAllBhoomiSurveyNosCorrect": 1,
           "siteDetails": {

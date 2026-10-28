@@ -64,6 +64,10 @@ builder.Services.AddOptions<OtpOptions>()
     .Bind(builder.Configuration.GetSection(OtpOptions.Section))
     .ValidateDataAnnotations().ValidateOnStart();
 
+builder.Services.AddOptions<SurveyOptions>()
+    .Bind(builder.Configuration.GetSection(SurveyOptions.Section))
+    .ValidateDataAnnotations().ValidateOnStart();
+
 builder.Services.AddOptions<AuthOptions>()
     .Bind(builder.Configuration.GetSection(AuthOptions.Section))
     .ValidateOnStart();

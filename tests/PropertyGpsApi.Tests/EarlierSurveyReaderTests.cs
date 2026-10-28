@@ -109,7 +109,7 @@ public class EarlierSurveyReaderTests
                 RowId = rowId++,
                 RoadRowId = int.TryParse(q.Get<string?>("@BtoA_SiteRoadRowID"), out var id) ? id : null,
                 IsAdded = q.Get<string?>("@BtoA_SiteRoadRowID") is null ? 1 : 0,
-                RoadId = q.Get<int?>("@BtoA_RoadId"),
+                RoadId = q.Get<string?>("@BtoA_RoadId"),
                 RoadName = q.Get<string?>("@BtoA_RoadName"),
                 ActualRoadName = q.Get<string?>("@BtoA_ActualRoadName"),
                 RoadType = q.Get<string?>("@BtoA_RoadType"),
@@ -272,10 +272,11 @@ public class EarlierSurveyReaderTests
         {
             RowId = rowId, SiteRoadRowId = siteRoadRowId, TypeValue = word,
             TypeId = word switch { "No Change" => 0, "Update" => 1, "Delete" => 2, "Add" => 3, _ => null },
-            RoadId = roadId, RoadName = name, ActualRoadName = actual, RoadType = type, InPublicList = 0, Corrected = 0
+            RoadId = roadId?.ToString(System.Globalization.CultureInfo.InvariantCulture), RoadName = name, ActualRoadName = actual, RoadType = type, InPublicList = 0, Corrected = 0
         };
 
-        private static DeclaredRoad Declared(int rowId, int? roadId) => new() { RoadRowId = rowId, RoadId = roadId };
+        private static DeclaredRoad Declared(int rowId, int? roadId) =>
+            new() { RoadRowId = rowId, RoadId = roadId?.ToString(System.Globalization.CultureInfo.InvariantCulture) };
 
         [Fact]
         public void A_row_holding_the_declared_row_id_is_that_road() =>
@@ -376,5 +377,35 @@ public class EarlierSurveyReaderTests
             foreach (var word in new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "EXEC" })
                 Assert.DoesNotContain(word, Sql, StringComparison.OrdinalIgnoreCase);
         }
+
+        /// <summary>
+        /// Road ids are text now (@BtoA_RoadId is NVARCHAR(50)): every road id column is read
+        /// as nvarchar(50), so an int column and a text one read the same way.
+        /// </summary>
+        [Fact]
+        public void Reads_every_road_id_as_text()
+        {
+            Assert.Contains("RoadId = CAST(r.Ofcr_RoadId AS nvarchar(50))", Sql);
+            Assert.Contains("RoadId = CAST(o.Ofcr_RoadId AS nvarchar(50))", Sql);
+            Assert.Contains("RoadId = CAST(d.Rd_RoadId AS nvarchar(50))", Sql);
+        }
+    }
+
+    public class RoadIds
+    {
+        [Theory]
+        [InlineData("9320", "9320")]
+        [InlineData(" KA-12a ", "ka-12A")]
+        [InlineData("999", "999")]
+        public void The_same_road_id_matches_trimmed_and_ignoring_case(string a, string b) =>
+            Assert.True(SameRoadId(a, b));
+
+        [Theory]
+        [InlineData("9320", "932")]
+        [InlineData("007", "7")]   // text, never parsed
+        [InlineData(null, null)]   // no id matches nothing, not even another missing one
+        [InlineData("", "")]
+        public void Different_or_missing_road_ids_do_not_match(string? a, string? b) =>
+            Assert.False(SameRoadId(a, b));
     }
 }

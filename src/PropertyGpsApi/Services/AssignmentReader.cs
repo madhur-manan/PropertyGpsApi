@@ -33,8 +33,7 @@ internal sealed class AssignmentReader : IAssignmentReader
     // it - any RI of the ward may take it (N2). ApplicationService.ReleaseReturnedSql retires
     // that row when someone does.
 
-    public async Task<IReadOnlyDictionary<int, AssignmentRow>> ActiveForAsync(
-        SqlConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct)
+    public async Task<IReadOnlyDictionary<int, AssignmentRow>> ActiveForAsync(SqlConnection connection, IReadOnlyCollection<int> appIds, CancellationToken ct)
     {
         if (appIds.Count == 0) return new Dictionary<int, AssignmentRow>();
 

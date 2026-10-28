@@ -25,9 +25,16 @@ internal static class ClaimsPrincipalExtensions
             : throw ApiException.Unauthorized("Your session is not valid. Please sign in again.");
 
     /// <summary>
-    /// A claim that is legitimately absent for some roles - a zone officer has
-    /// no ward, and JwtTokenService omits the claim rather than writing a zero.
+    /// A claim that is legitimately absent for some roles - an officer above ward
+    /// level has no ward, and JwtTokenService omits the claim rather than writing a zero.
     /// </summary>
     public static long? OptionalLong(this ClaimsPrincipal user, string claimType) =>
         long.TryParse(user.FindFirstValue(claimType), out var value) ? value : null;
+
+    /// <summary>
+    /// A text claim that may be absent - the ward number (GpsClaims.WardNumber), which is
+    /// text, not a number. Trimmed; null when absent or blank.
+    /// </summary>
+    public static string? OptionalString(this ClaimsPrincipal user, string claimType) =>
+        user.FindFirstValue(claimType) is { } value && !string.IsNullOrWhiteSpace(value) ? value.Trim() : null;
 }

@@ -67,13 +67,16 @@ internal sealed class HistoryService(
                    TRY_CAST(rn.Ofcr_SiteRoadRowID AS int), rn.Ofcr_RowId)
         """;
 
-    private const string PageSql = $$"""
+    // The ward is its ULB and ward number (text), as the ward sync matches them; zoneId and
+    // wardId are no longer read and stay null in the reply.
+    internal const string PageSql = $$"""
         SELECT
             ApplicationId = mao.Ofcr_ApplicationDisplayId,
+            AppId         = ap.App_Id,
             Epid          = mao.Ofcr_MotherEPID,
             SasId         = mao.Ofcr_SsaId,
-            ZoneId        = md.MD_ZoneId,
-            WardId        = md.MD_WardId,
+            UlbCode       = TRY_CONVERT(int, md.MD_ULBCode),
+            WardNumber    = LTRIM(RTRIM(CONVERT(nvarchar(20), md.MD_WardId))),
             AppStatus     = ap.App_Status,
             SubmittedOn   = COALESCE(mao.UDte, mao.CDte),
             RoadCount     = {{RoadCountSql}},

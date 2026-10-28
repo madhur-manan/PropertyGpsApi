@@ -89,7 +89,7 @@ public class WardLiveTests
         public void StopApplication() => _stopping.Cancel();
     }
 
-    private static readonly Jurisdiction Hoodi = new() { ZoneId = 102, WardId = 54, WardName = "Hoodi" };
+    private static readonly Jurisdiction Hoodi = new() { UlbCode = 1, WardNumber = "54", WardName = "Hoodi" };
 
     /// <summary>A request from officer 11333, with what the endpoint resolves.</summary>
     private static DefaultHttpContext Request(
@@ -142,11 +142,11 @@ public class WardLiveTests
             await using var a2 = await SocketPair.OpenAsync();
             await using var b = await SocketPair.OpenAsync();
             var hub = Hub();
-            hub.Add(102, 54, 11331, a1.Server);
-            hub.Add(102, 54, 11333, a2.Server);
-            hub.Add(102, 55, 11320, b.Server);
+            hub.Add(1, "54", 11331, a1.Server);
+            hub.Add(1, "54", 11333, a2.Server);
+            hub.Add(1, "55", 11320, b.Server);
 
-            var delivered = await hub.PublishAsync(102, 54, [Taken]);
+            var delivered = await hub.PublishAsync(1, "54", [Taken]);
 
             Assert.Equal(2, delivered);
             foreach (var phone in new[] { a1.Client, a2.Client })
@@ -169,14 +169,14 @@ public class WardLiveTests
             await using var gone = await SocketPair.OpenAsync();
             await using var here = await SocketPair.OpenAsync();
             var hub = Hub();
-            hub.Add(102, 54, 11331, gone.Server);
-            hub.Add(102, 54, 11333, here.Server);
+            hub.Add(1, "54", 11331, gone.Server);
+            hub.Add(1, "54", 11333, here.Server);
             gone.Server.Abort();
 
-            var delivered = await hub.PublishAsync(102, 54, [Taken]);
+            var delivered = await hub.PublishAsync(1, "54", [Taken]);
 
             Assert.Equal(1, delivered);
-            Assert.Equal(1, hub.Count(102, 54));
+            Assert.Equal(1, hub.Count(1, "54"));
             Assert.NotNull(await ReceiveAsync(here.Client));
         }
 
@@ -186,14 +186,14 @@ public class WardLiveTests
             await using var first = await SocketPair.OpenAsync();
             await using var second = await SocketPair.OpenAsync();
             var hub = Hub();
-            hub.Add(102, 54, 11333, first.Server);
-            hub.Add(102, 54, 11333, second.Server);
+            hub.Add(1, "54", 11333, first.Server);
+            hub.Add(1, "54", 11333, second.Server);
 
             var closed = await ReceiveAsync(first.Client);
             Assert.NotNull(closed);
             Assert.Equal(WebSocketMessageType.Close, closed.Value.Type);
             Assert.Equal(WardLiveConnection.ReplacedByNewer, closed.Value.Close);
-            Assert.Equal(1, hub.Count(102, 54));
+            Assert.Equal(1, hub.Count(1, "54"));
         }
 
         [Fact]
@@ -203,8 +203,8 @@ public class WardLiveTests
             await using var second = await SocketPair.OpenAsync();
             var clock = new FakeTimeProvider();
             var hub = Hub(clock);
-            hub.Add(102, 54, 11333, first.Server);
-            hub.Add(102, 54, 11333, second.Server);
+            hub.Add(1, "54", 11333, first.Server);
+            hub.Add(1, "54", 11333, second.Server);
 
             // The first phone never reads, so never answers the close.
             for (var i = 0; i < 100 && first.Server.State != WebSocketState.Aborted; i++)
@@ -221,16 +221,64 @@ public class WardLiveTests
         {
             await using var pair = await SocketPair.OpenAsync();
             var hub = Hub();
-            var connection = hub.Add(102, 54, 11333, pair.Server);
+            var connection = hub.Add(1, "54", 11333, pair.Server);
             hub.Remove(connection);
 
-            Assert.Equal(0, await hub.PublishAsync(102, 54, [Taken]));
+            Assert.Equal(0, await hub.PublishAsync(1, "54", [Taken]));
             Assert.Null(await ReceiveAsync(pair.Client, 300));
         }
 
         [Fact]
         public async Task A_ward_with_nobody_listening_is_not_an_error() =>
-            Assert.Equal(0, await Hub().PublishAsync(102, 54, [Taken]));
+            Assert.Equal(0, await Hub().PublishAsync(1, "54", [Taken]));
+
+        /// <summary>
+        /// A ward is its ULB and its ward number as text: "12A", " 12a " and "12a" are one
+        /// ward, as they are to the database; the same number in another ULB is another ward.
+        /// </summary>
+        [Fact]
+        public async Task The_hub_is_keyed_by_ulb_and_ward_text_ignoring_case_and_spaces()
+        {
+            await using var here = await SocketPair.OpenAsync();
+            await using var otherUlb = await SocketPair.OpenAsync();
+            var hub = Hub();
+            var connection = hub.Add(1, " 12A ", 11333, here.Server);
+            hub.Add(2, "12A", 11320, otherUlb.Server);
+
+            Assert.Equal((1, "12A"), (connection.UlbCode, connection.WardNumber));
+            Assert.Equal(1, hub.Count(1, "12a"));
+            Assert.Equal(1, await hub.PublishAsync(1, "12a ", [Taken]));
+            Assert.NotNull(await ReceiveAsync(here.Client));
+            Assert.Null(await ReceiveAsync(otherUlb.Client, 300));
+            Assert.Equal(0, await hub.PublishAsync(1, "12", [Taken]));
+        }
+
+        [Fact]
+        public async Task The_same_officer_in_one_ward_spelt_two_ways_is_one_socket()
+        {
+            await using var first = await SocketPair.OpenAsync();
+            await using var second = await SocketPair.OpenAsync();
+            var hub = Hub();
+            hub.Add(1, "12a", 11333, first.Server);
+            hub.Add(1, "12A", 11333, second.Server);
+
+            var closed = await ReceiveAsync(first.Client);
+            Assert.Equal(WardLiveConnection.ReplacedByNewer, closed?.Close);
+            Assert.Equal(1, hub.Count(1, "12A"));
+        }
+
+        [Fact]
+        public void The_key_comparer_ignores_case_and_the_hash_agrees()
+        {
+            var comparer = WardLiveHub.WardKeyComparer.Instance;
+            var a = WardLiveHub.Key(1, " 12a ");
+            var b = WardLiveHub.Key(1, "12A");
+
+            Assert.True(comparer.Equals(a, b));
+            Assert.Equal(comparer.GetHashCode(a), comparer.GetHashCode(b));
+            Assert.False(comparer.Equals(a, WardLiveHub.Key(2, "12A")));
+            Assert.False(comparer.Equals(a, WardLiveHub.Key(1, "12")));
+        }
 
         [Fact]
         public void The_message_is_the_pull_downs_shape_under_a_type() =>
@@ -261,7 +309,7 @@ public class WardLiveTests
         [Fact]
         public async Task A_plain_request_is_told_this_address_is_a_WebSocket()
         {
-            var http = Request(isWebSocket: false, "?zoneId=102&wardId=54", Hoodi);
+            var http = Request(isWebSocket: false, "?ulbCode=1&wardNumber=54", Hoodi);
             await WardLiveEndpoint.HandleAsync(http);
             Assert.Equal(400, http.Response.StatusCode);
             Assert.Equal(ApiErrorCodes.BadRequest, Code(http));
@@ -269,9 +317,12 @@ public class WardLiveTests
 
         [Theory]
         [InlineData("")]
-        [InlineData("?zoneId=102")]
-        [InlineData("?zoneId=0&wardId=54")]
-        [InlineData("?zoneId=abc&wardId=54")]
+        [InlineData("?ulbCode=1")]
+        [InlineData("?wardNumber=54")]
+        [InlineData("?ulbCode=0&wardNumber=54")]
+        [InlineData("?ulbCode=abc&wardNumber=54")]
+        [InlineData("?ulbCode=1&wardNumber=%20%20")]
+        [InlineData("?ulbCode=1&wardNumber=123456789012345678901")]   // 21 characters
         public async Task A_missing_ward_is_refused_before_the_upgrade(string query)
         {
             var http = Request(isWebSocket: true, query, Hoodi);
@@ -282,7 +333,7 @@ public class WardLiveTests
         [Fact]
         public async Task A_ward_the_officer_is_not_mapped_to_is_refused_before_the_upgrade()
         {
-            var http = Request(isWebSocket: true, "?zoneId=109&wardId=112", Hoodi);
+            var http = Request(isWebSocket: true, "?ulbCode=1&wardNumber=112", Hoodi);
             await WardLiveEndpoint.HandleAsync(http);
             Assert.Equal(403, http.Response.StatusCode);
             Assert.Equal(ApiErrorCodes.OutsideJurisdiction, Code(http));
@@ -291,9 +342,39 @@ public class WardLiveTests
         [Fact]
         public async Task The_officers_own_ward_is_let_through_to_the_upgrade()
         {
-            var http = Request(isWebSocket: true, "?zoneId=102&wardId=54", Hoodi);
+            var http = Request(isWebSocket: true, "?ulbCode=1&wardNumber=54", Hoodi);
             var accepted = await Assert.ThrowsAsync<InvalidOperationException>(() => WardLiveEndpoint.HandleAsync(http));
             Assert.Equal("accepted", accepted.Message);
+        }
+
+        /// <summary>A two-ward officer's second ward, URL-encoded text in another case.</summary>
+        [Fact]
+        public async Task Any_mapped_ward_is_let_through_matched_as_text()
+        {
+            var second = new Jurisdiction { UlbCode = 7, WardNumber = "12A/1" };
+            var http = Request(isWebSocket: true, "?ulbCode=7&wardNumber=%2012a%2F1%20", Hoodi, second);
+            var accepted = await Assert.ThrowsAsync<InvalidOperationException>(() => WardLiveEndpoint.HandleAsync(http));
+            Assert.Equal("accepted", accepted.Message);
+        }
+
+        [Fact]
+        public async Task The_same_ward_number_in_another_ulb_is_refused()
+        {
+            var http = Request(isWebSocket: true, "?ulbCode=2&wardNumber=54", Hoodi);
+            await WardLiveEndpoint.HandleAsync(http);
+            Assert.Equal(403, http.Response.StatusCode);
+        }
+
+        [Fact]
+        public void The_ward_is_read_from_the_query_trimmed()
+        {
+            var query = new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+            {
+                ["ulbCode"] = "7", ["wardNumber"] = " 12A "
+            });
+
+            Assert.True(WardLiveEndpoint.TryReadWard(query, out var ulb, out var ward));
+            Assert.Equal((7, "12A"), (ulb, ward));
         }
     }
 
@@ -366,7 +447,7 @@ public class WardLiveTests
             _pair = await SocketPair.OpenAsync();
             // Runs up to the first wait on the phone; the session watch is already waiting.
             _handler = WardLiveEndpoint.HandleAsync(
-                Request(new Upgraded(_pair.Server), "?zoneId=102&wardId=54", _officer, _clock, _lifetime));
+                Request(new Upgraded(_pair.Server), "?ulbCode=1&wardNumber=54", _officer, _clock, _lifetime));
         }
 
         public async Task DisposeAsync() => await _pair.DisposeAsync();
@@ -444,6 +525,16 @@ public class WardLiveTests
             Assert.Contains("a.IsActive = 1", sql);
             Assert.Contains("NOT (a.Status = 'Completed' AND ap.App_Status = 400)", sql);
             Assert.Contains("ISNULL(h.Arch_Id, 0)", sql);
+        }
+
+        /// <summary>The hub's key, read as the ward sync filters: MD_ULBCode and the trimmed MD_WardId text.</summary>
+        [Fact]
+        public void Reads_the_ulb_and_the_ward_number_as_text()
+        {
+            var sql = ApplicationService.AppHolderSql;
+            Assert.Contains("UlbCode = TRY_CONVERT(int, md.MD_ULBCode)", sql);
+            Assert.Contains("WardNumber = LTRIM(RTRIM(CONVERT(nvarchar(20), md.MD_WardId)))", sql);
+            Assert.DoesNotContain("MD_ZoneId", sql);
         }
 
         [Fact]

@@ -72,8 +72,9 @@ internal sealed class ApplicationService(
         {
             var now = await connection.QueryFirstOrDefaultAsync<AppHolderRow>(new CommandDefinition(
                 AppHolderSql, new { appId }, commandTimeout: 10));
-            if (now is null) return;
-            _ = live.PublishAsync(now.ZoneId, now.WardId,
+            // An application with no ULB or ward has no phones listening for it.
+            if (now?.UlbCode is not > 0 || WardNumbers.Clean(now.WardNumber) is not { } ward) return;
+            _ = live.PublishAsync(now.UlbCode.Value, ward,
                 [new WardSyncHolderDto { AppId = appId, AssignedToUserId = now.Holder }]);
         }
         catch (Exception ex)
@@ -83,12 +84,15 @@ internal sealed class ApplicationService(
     }
 
     /// <summary>
-    /// The application's ward, and who holds it now: the newest active row, not counting the
-    /// earlier officer's completed row while QC has it returned - the rule of
+    /// The application's ward - its ULB and ward number, the hub's key, read as the ward sync
+    /// filters them - and who holds it now: the newest active row, not counting the earlier
+    /// officer's completed row while QC has it returned - the rule of
     /// WardSyncService.HoldersSql. 0 when free.
     /// </summary>
     internal const string AppHolderSql = """
-        SELECT TOP (1) ZoneId = md.MD_ZoneId, WardId = md.MD_WardId, Holder = ISNULL(h.Arch_Id, 0)
+        SELECT TOP (1) UlbCode = TRY_CONVERT(int, md.MD_ULBCode),
+               WardNumber = LTRIM(RTRIM(CONVERT(nvarchar(20), md.MD_WardId))),
+               Holder = ISNULL(h.Arch_Id, 0)
         FROM dbo.BtoAMainApp ap
         JOIN dbo.BtoA_EPIDMetaData md ON md.MD_APP_ID = ap.App_Id AND md.MD_MotherEPID = ap.App_MotherEPID
         OUTER APPLY (SELECT TOP (1) a.Arch_Id
@@ -101,8 +105,8 @@ internal sealed class ApplicationService(
 
     private sealed class AppHolderRow
     {
-        public int ZoneId { get; init; }
-        public int WardId { get; init; }
+        public int? UlbCode { get; init; }
+        public string? WardNumber { get; init; }
         public int Holder { get; init; }
     }
 

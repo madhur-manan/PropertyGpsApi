@@ -32,8 +32,12 @@ internal sealed class VerificationSubmitService(
     ISqlConnectionFactory connections,
     IMediaStore media,
     IOptions<StoredProcedureOptions> procedures,
-    ILogger<VerificationSubmitService> logger) : IVerificationSubmitService
+    ILogger<VerificationSubmitService> logger,
+    IOptions<SurveyOptions>? survey = null) : IVerificationSubmitService
 {
+    /// <summary>The Mixed-use minimum share, in percent (SurveyOptions).</summary>
+    private double MinMixedExtentPercent => survey?.Value.MinMixedExtentPercent ?? new SurveyOptions().MinMixedExtentPercent;
+
     public async Task<SubmitVerificationResponse> SubmitAsync(
         SubmitVerificationRequest request,
         IReadOnlyDictionary<string, string> mediaUrls,
@@ -89,14 +93,23 @@ internal sealed class VerificationSubmitService(
             // USP_IU_BtoA_MainApp_Officer reports that only in its first result set. Reading
             // App_Id up front turns "unknown application" into one clear answer, and we need
             // the id anyway for the road and status calls.
-            var appId = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
-                "SELECT App_Id FROM BtoAMainApp WHERE App_DisplayId = @d AND App_Active = 1",
+            var app = await connection.QueryFirstOrDefaultAsync<AppKeyRow>(new CommandDefinition(
+                "SELECT App_Id AS AppId, App_MotherEPID AS Epid FROM BtoAMainApp WHERE App_DisplayId = @d AND App_Active = 1",
                 new { d = request.ApplicationId }, transaction, 30, CommandType.Text, cancellationToken: ct));
+            var appId = app?.AppId;
 
             if (appId is null)
                 throw ApiException.Unprocessable(
                     "This application is not on the server. Nothing was saved.",
                     ApiErrorCodes.ApplicationNotFound, recoverable: true);
+
+            // One EPID can carry several applications (db/44). The photos were filed under the
+            // EPID the phone sent, and the photo check reads that EPID, so it must be this
+            // application's own.
+            if (!SameEpid(request.Epid, app!.Epid))
+                throw ApiException.Unprocessable(
+                    "This survey's property does not match the application. Fetch the property again. Nothing was saved.",
+                    ApiErrorCodes.ValidationFailed, recoverable: true);
 
             // Who may send this survey now (N2). Read under the lock, so a second submit
             // cannot slip between the check and the write.
@@ -192,6 +205,16 @@ internal sealed class VerificationSubmitService(
         return rows > 0;
     }
 
+    internal sealed class AppKeyRow
+    {
+        public int AppId { get; init; }
+        public string? Epid { get; init; }
+    }
+
+    /// <summary>The EPID the phone sent is the application's own (trimmed, any case).</summary>
+    internal static bool SameEpid(string? sent, string? stored) =>
+        string.Equals(sent?.Trim(), stored?.Trim(), StringComparison.OrdinalIgnoreCase);
+
     // ── Who may submit (N2) ──────────────────────────────────────────────────────────────
 
     /// <summary>BtoAMainApp.App_Status: waiting for the RI, returned by QC.</summary>
@@ -237,8 +260,9 @@ internal sealed class VerificationSubmitService(
     /// waiting for QC: the same officer may send it again - a retry after a lost reply, or an
     /// edit made meanwhile - and it replaces their earlier send as it always has (D5/D22);
     /// anyone else is too late. The status itself is not the test - the status procedure sets
-    /// 13 for role 116 but 15 or 12 for role 117 (db/30). Once a reviewer has written, the
-    /// survey is closed to the phone.
+    /// 13 for both roles when told the source (StatusSource), but gave role 117 15 or 12
+    /// before it was (db/30), and surveys filed then are still about. Once a reviewer has
+    /// written, the survey is closed to the phone.
     /// </summary>
     internal static SubmitGate Gate(SubmitStateRow s, long officerId) => s.AppStatus switch
     {
@@ -682,7 +706,8 @@ internal sealed class VerificationSubmitService(
         // values are refused by Validate rather than silently truncated (D24).
         p.Add("@BtoA_RoadType", road.RoadType, DbType.String, size: 50);
         p.Add("@BtoA_IsPresentInPublicRoadList", AsBit(road.IsPresentInPublicRoadList), DbType.Boolean);
-        p.Add("@BtoA_RoadId", ParseRoadId(road.RoadId), DbType.Int32);
+        // Text, as the street list gives it: the procedure's @BtoA_RoadId is NVARCHAR(50).
+        p.Add("@BtoA_RoadId", RoadIdText(road.RoadId), DbType.String, size: MaxRoadIdLength);
         p.Add("@BtoA_RoadName", road.RoadName, DbType.String, size: MaxRoadNameLength);
         p.Add("@BtoA_ActualRoadName", road.ActualRoadName, DbType.String, size: MaxRoadNameLength);
         p.Add("@BtoA_Nearest_Public_Road_Latitude", road.NearPublicRoadLat, DbType.Double);
@@ -753,6 +778,32 @@ internal sealed class VerificationSubmitService(
         SubmitVerificationRequest request, int appId, long officerId, int roleId,
         string? officerMobile, CancellationToken ct)
     {
+        var p = StatusParameters(request, appId, officerId, roleId, officerMobile);
+
+        // This is the call that moves BtoAMainApp.App_Status to 13. Before the fix in
+        // db/11 it set the status to NULL for role 116 and the application vanished; it
+        // now raises instead if a role is ever unmapped, which reaches the client as a
+        // retryable server error rather than silent loss.
+        await connection.ExecuteAsync(new CommandDefinition(
+            sp.SubmitStatus, p, transaction, 60, CommandType.StoredProcedure, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// What the status procedure is told the caller is. With this value an RI's (role 117)
+    /// survey takes the path role 116's always has - status 13, "Data Received from RI" -
+    /// rather than the 15/12 the procedure gives 117 for the other apps that call it, which
+    /// send no source and behave exactly as before. A constant, not configuration: the
+    /// procedure compares it to this literal.
+    /// </summary>
+    internal const string StatusSource = "PropertyGPS";
+
+    /// <summary>
+    /// The parameters of dbo.USP_IU_BtoA_StatusDetail_Officer. Separate from the call so every
+    /// value can be asserted without a database.
+    /// </summary>
+    internal static DynamicParameters StatusParameters(
+        SubmitVerificationRequest request, int appId, long officerId, int roleId, string? officerMobile)
+    {
         var p = new DynamicParameters();
         p.Add("@Ofcr_StatusRowId", 0, DbType.Int32);
         p.Add("@Ofcr_App_Id", appId, DbType.Int32);
@@ -772,13 +823,8 @@ internal sealed class VerificationSubmitService(
         p.Add("@CRole", roleId, DbType.Int32);
         p.Add("@isAutoEscalated", false, DbType.Boolean);
         p.Add("@autoEscalatedDate", (DateTime?)null, DbType.DateTime);
-
-        // This is the call that moves BtoAMainApp.App_Status to 13. Before the fix in
-        // db/11 it set the status to NULL for role 116 and the application vanished; it
-        // now raises instead if a role is ever unmapped, which reaches the client as a
-        // retryable server error rather than silent loss.
-        await connection.ExecuteAsync(new CommandDefinition(
-            sp.SubmitStatus, p, transaction, 60, CommandType.StoredProcedure, cancellationToken: ct));
+        p.Add("@Source", StatusSource, DbType.String, size: 50);
+        return p;
     }
 
     private static async Task SafeRollbackAsync(SqlTransaction transaction)
@@ -832,12 +878,13 @@ internal sealed class VerificationSubmitService(
     private static bool? AsBit(bool value) => value;
 
     /// <summary>
-    /// "999" is the agreed sentinel for "this road is not in the public list". It is a
-    /// real value the procedure expects, not a parse failure. Anything that is not an int
-    /// is refused by Validate (A3), so null here means the road has no id at all.
+    /// The road id as the procedure takes it: the text the officer picked, trimmed, never
+    /// parsed - street ids are not promised to be numbers. "999" is the agreed sentinel for
+    /// "this road is not in the public list" and passes as it is. Null when there is no id.
+    /// Validate refuses one longer than <see cref="MaxRoadIdLength"/>.
     /// </summary>
-    internal static int? ParseRoadId(string? roadId) =>
-        int.TryParse(roadId, out var parsed) ? parsed : null;
+    internal static string? RoadIdText(string? roadId) =>
+        string.IsNullOrWhiteSpace(roadId) ? null : roadId.Trim();
 
     internal static string? CorrectionTypeValue(int? roadStatus) => roadStatus switch
     {
@@ -882,10 +929,12 @@ internal sealed class VerificationSubmitService(
             isDeclaredRoadFacingSidesCorrect = r.SiteDetails.IsDeclaredRoadFacingSidesCorrect
         });
 
-    public void Validate(SubmitVerificationRequest request, int roleId, long? officerWardId)
+    public void Validate(SubmitVerificationRequest request, int roleId, IReadOnlyCollection<Jurisdiction>? officerWards)
     {
+        // By the application's ULB + ward number (ulbCode / wardNumber), against every ward
+        // mapped to the officer. zoneId / wardId, which older builds send, are not read.
         JurisdictionRules.RequireOwnWard(
-            roleId, officerWardId, request.WardId,
+            roleId, officerWards, request.UlbCode, request.WardNumber,
             "You can only submit surveys for your own ward.");
 
         var errors = new List<ApiError>();
@@ -985,8 +1034,45 @@ internal sealed class VerificationSubmitService(
             RequireCoordinatePair(errors, $"siteDetails.roadDetails[{i}].nearPublicRoadLat", road.NearPublicRoadLat, road.NearPublicRoadLng);
         }
 
+        ValidateMixedExtents(errors, site, MinMixedExtentPercent);
+
         if (errors.Count > 0)
             throw new SubmitRejectedException(errors);
+    }
+
+    /// <summary>The use type code the app files for Mixed.</summary>
+    internal const int MixedUseTypeId = 3;
+
+    /// <summary>
+    /// A Mixed plot holds both uses, each at least <paramref name="minPercent"/> of the site
+    /// area (SurveyOptions; user, 2026-10-28). The app checks the same before sending; this
+    /// is the backstop for older installs. Compared in hundredths of a square metre, as the
+    /// app rounds them.
+    /// </summary>
+    internal static void ValidateMixedExtents(List<ApiError> errors, SubmitSiteDetails site, double minPercent)
+    {
+        if (site.IsPropertyUseTypeCorrect is not 0 || site.PropertyUseTypeId != MixedUseTypeId) return;
+        if (site.SiteArea is not > 0) return;
+
+        static long Cents(double v) => (long)Math.Round(v * 100, MidpointRounding.AwayFromZero);
+        var minCents = Cents(site.SiteArea.Value * minPercent / 100);
+        var min = (minCents / 100.0).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        var percent = minPercent.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+        foreach (var (field, label, area) in new[]
+                 {
+                     ("siteDetails.commercialArea", "Commercial", site.CommercialArea),
+                     ("siteDetails.residentialArea", "Residential", site.ResidentialArea),
+                 })
+        {
+            if (area is { } a && Cents(a) > 0 && Cents(a) >= minCents) continue;
+            errors.Add(new ApiError
+            {
+                Field = field,
+                Code = "INVALID",
+                Message = $"{label} Extent must be at least {percent}% of the site area ({min} sq.m)."
+            });
+        }
     }
 
     /// <summary>The procedure's NVARCHAR(250) road name parameters (and columns).</summary>
@@ -994,6 +1080,9 @@ internal sealed class VerificationSubmitService(
 
     /// <summary>The procedure's NVARCHAR(50) road type parameter.</summary>
     internal const int MaxRoadTypeLength = 50;
+
+    /// <summary>The procedure's NVARCHAR(50) @BtoA_RoadId, measured trimmed.</summary>
+    internal const int MaxRoadIdLength = 50;
 
     private static void RequireBit(List<ApiError> errors, string field, int? value)
     {
@@ -1114,15 +1203,10 @@ internal sealed class VerificationSubmitService(
                     Message = $"Road {i + 1} has an unknown status ({status})."
                 });
 
-            // A road id that is not a number reached the procedure as NULL, which also
-            // defeats its upsert key (A3).
-            if (!string.IsNullOrWhiteSpace(road.RoadId) && ParseRoadId(road.RoadId) is null)
-                errors.Add(new ApiError
-                {
-                    Field = $"siteDetails.roadDetails[{i}].roadId",
-                    Code = "INVALID",
-                    Message = $"Road {i + 1} has a road id that is not a number ({road.RoadId.Trim()})."
-                });
+            // A road id is any text the street list gave (or "999"), but the procedure's
+            // parameter is NVARCHAR(50): a longer one would be silently cut, and then match
+            // nothing. It used to have to be a number (A3); street ids are not promised to be.
+            TooLong(errors, $"siteDetails.roadDetails[{i}].roadId", RoadIdText(road.RoadId), MaxRoadIdLength, i);
 
             // A row id of 0 or below names no road row, and makes media file names the
             // media endpoint refuses to serve (A6).

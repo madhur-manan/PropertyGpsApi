@@ -9,7 +9,12 @@ namespace PropertyGpsApi.Interfaces;
 
 public interface IMasterService
 {
-    Task<IReadOnlyList<ZoneDto>> ZonesAsync(int corporationId, CancellationToken ct);
-    Task<IReadOnlyList<WardDto>> WardsAsync(int zoneId, CancellationToken ct);
-    Task<IReadOnlyList<StreetDto>> StreetsAsync(int corporationId, int zoneId, int wardId, CancellationToken ct);
+    /// <summary>The ULBs of mst_AROMapping, of one district when given.</summary>
+    Task<IReadOnlyList<UlbDto>> UlbsAsync(int? districtCode, CancellationToken ct);
+
+    /// <summary>The wards of one ULB, by ward number.</summary>
+    Task<IReadOnlyList<WardDto>> WardsAsync(int ulbCode, CancellationToken ct);
+
+    /// <summary>A ward's roads, for the road pickers. The ward number is trimmed text.</summary>
+    Task<IReadOnlyList<StreetDto>> StreetsAsync(int ulbCode, string wardNumber, CancellationToken ct);
 }

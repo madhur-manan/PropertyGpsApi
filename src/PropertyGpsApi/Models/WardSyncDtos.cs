@@ -12,17 +12,20 @@ namespace PropertyGpsApi.Models;
 /// </summary>
 public sealed class WardSyncRequest
 {
+    /// <summary>The ward is named by its ULB code and ward number (BtoA_EPIDMetaData.MD_ULBCode + MD_WardId).</summary>
     [Range(1, int.MaxValue)]
-    [JsonPropertyName("corporationId")]
-    public int CorporationId { get; init; }
+    [JsonPropertyName("ulbCode")]
+    public int UlbCode { get; init; }
 
-    [Range(1, int.MaxValue)]
-    [JsonPropertyName("zoneId")]
-    public int ZoneId { get; init; }
+    /// <summary>Text, 1 to 20 characters once trimmed.</summary>
+    [WardNumber]
+    [JsonPropertyName("wardNumber")]
+    public string WardNumber { get; init; } = "";
 
-    [Range(1, int.MaxValue)]
-    [JsonPropertyName("wardId")]
-    public int WardId { get; init; }
+    // Older builds sent these. Accepted and ignored: Property GPS works by ULB + ward number.
+    [JsonPropertyName("corporationId")] public int? CorporationId { get; init; }
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
 
     /// <summary>How many applications the phone holds for this ward. Logged beside the server's count.</summary>
     [Range(0, WardSyncLimits.MaxHeld)]
@@ -63,6 +66,14 @@ public sealed class WardSyncRequest
     /// </summary>
     [JsonPropertyName("includeClosed")]
     public bool IncludeClosed { get; init; }
+
+    /// <summary>
+    /// True (the default, what app 1.2.0 gets by not sending it): only the newest workable
+    /// application per EPID, because those phones keep one record per EPID. App 1.3.0 keeps one
+    /// record per App_Id and sends false: every workable application (needs db/44).
+    /// </summary>
+    [JsonPropertyName("onePerEpid")]
+    public bool OnePerEpid { get; init; } = true;
 }
 
 public sealed class WardSyncResponse
@@ -72,6 +83,13 @@ public sealed class WardSyncResponse
 
     /// <summary>The phone's count, echoed.</summary>
     [JsonPropertyName("localCount")] public int LocalCount { get; init; }
+
+    /// <summary>
+    /// Survey__MinMixedExtentPercent: each extent of a Mixed plot must be at least this share
+    /// of the site, in percent. Sent with every sync so the phone follows a change on the
+    /// server without a new build. Set by the controller from SurveyOptions.
+    /// </summary>
+    [JsonPropertyName("minMixedExtentPercent")] public double MinMixedExtentPercent { get; set; }
 
     /// <summary>How many the phone lacks before this batch is applied.</summary>
     [JsonPropertyName("missingCount")] public int MissingCount { get; init; }
@@ -99,12 +117,16 @@ public sealed class WardSyncResponse
 public sealed class WardHoldersRequest
 {
     [Range(1, int.MaxValue)]
-    [JsonPropertyName("zoneId")]
-    public int ZoneId { get; init; }
+    [JsonPropertyName("ulbCode")]
+    public int UlbCode { get; init; }
 
-    [Range(1, int.MaxValue)]
-    [JsonPropertyName("wardId")]
-    public int WardId { get; init; }
+    [WardNumber]
+    [JsonPropertyName("wardNumber")]
+    public string WardNumber { get; init; } = "";
+
+    // Older builds sent these. Accepted and ignored.
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
 
     /// <summary>The App_Ids the phone holds for this ward.</summary>
     [MaxLength(WardSyncLimits.MaxHeld, ErrorMessage = "Too many application ids in one request.")]
@@ -125,12 +147,16 @@ public sealed class WardHoldersResponse
 public sealed class ReturnedSurveyRequest
 {
     [Range(1, int.MaxValue)]
-    [JsonPropertyName("zoneId")]
-    public int ZoneId { get; init; }
+    [JsonPropertyName("ulbCode")]
+    public int UlbCode { get; init; }
 
-    [Range(1, int.MaxValue)]
-    [JsonPropertyName("wardId")]
-    public int WardId { get; init; }
+    [WardNumber]
+    [JsonPropertyName("wardNumber")]
+    public string WardNumber { get; init; } = "";
+
+    // Older builds sent these. Accepted and ignored.
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
 
     [Range(1, int.MaxValue)]
     [JsonPropertyName("appId")]
@@ -202,12 +228,16 @@ public sealed class WardSyncClosedDto
 public sealed class WardSyncAckRequest
 {
     [Range(1, int.MaxValue)]
-    [JsonPropertyName("zoneId")]
-    public int ZoneId { get; init; }
+    [JsonPropertyName("ulbCode")]
+    public int UlbCode { get; init; }
 
-    [Range(1, int.MaxValue)]
-    [JsonPropertyName("wardId")]
-    public int WardId { get; init; }
+    [WardNumber]
+    [JsonPropertyName("wardNumber")]
+    public string WardNumber { get; init; } = "";
+
+    // Older builds sent these. Accepted and ignored.
+    [JsonPropertyName("zoneId")] public int? ZoneId { get; init; }
+    [JsonPropertyName("wardId")] public int? WardId { get; init; }
 
     [Required]
     [MinLength(1, ErrorMessage = "Acknowledge at least one application.")]

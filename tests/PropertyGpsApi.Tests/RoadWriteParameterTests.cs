@@ -22,7 +22,8 @@ public sealed class RoadWriteParameterTests
     {
         ApplicationId = "TESTAPP0001",
         Epid = "9990000001",
-        WardId = 54,
+        UlbCode = 1,
+        WardNumber = "54",
         PropertyLandExists = 1,
         IsAllBhoomiSurveyNosCorrect = 1,
         SiteDetails = site,
@@ -117,7 +118,7 @@ public sealed class RoadWriteParameterTests
 
         var p = VerificationSubmitService.RoadParameters("TESTAPP0001", road, media, 9900001, 116);
 
-        Assert.Equal(637, p.Get<int>("@BtoA_RoadId"));
+        Assert.Equal("637", p.Get<string>("@BtoA_RoadId"));   // text, trimmed, never parsed
         Assert.Equal("Green woods layout", p.Get<string>("@BtoA_RoadName"));
         Assert.Equal("Test Lane 4", p.Get<string>("@BtoA_ActualRoadName"));
         Assert.Equal("updated", p.Get<string>("@BtoA_Correction_Type_Value"));

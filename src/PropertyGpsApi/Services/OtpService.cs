@@ -15,7 +15,9 @@ internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJw
     public async Task<SendOtpResponse> SendAsync(SendOtpRequest request, CancellationToken ct)
     {
         var otpOptions = options.Value;
-        var roleId = request.RoleId ?? otpOptions.DefaultRoleId;
+        // Always the RI role (117): the app signs nobody else in, so a roleId in the request
+        // cannot ask the officer check about another role.
+        var roleId = otpOptions.DefaultRoleId;
 
         // Check the officer exists and is active BEFORE generating anything. Without this we
         // happily store a code for any number that arrives, which wastes an SMS on a typo and
@@ -136,31 +138,9 @@ internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJw
                 officer.OfficerId);
         }
 
-        return new VerifyOtpResponse
-        {
-            Token = token,
-            ExpiresAt = expiresAt,
-            UserId = officer.OfficerId,
-            RoleId = officer.RoleId,
-            Mobile = officer.Mobile,
-            UserName = officer.Name,
-            Designation = officer.RoleName,
-            CorporationId = officer.CorporationId,
-            CorporationName = officer.CorporationName,
-            ZoneId = officer.ZoneId,
-            WardId = officer.WardId,
-            Jurisdictions = officer.Jurisdictions.Select(j => new JurisdictionDto
-            {
-                GbaZoneId = j.GbaZoneId,
-                GbaZoneName = j.GbaZoneName,
-                ZoneId = j.ZoneId,
-                ZoneName = j.ZoneName,
-                WardId = j.WardId,
-                WardName = j.WardName,
-                CorporationId = j.CorporationId,
-                CorporationName = j.CorporationName
-            }).ToList()
-        };
+        // The same shape auth/me answers with: the officer's ULBs and wards, the first one
+        // (the token's) also at the top.
+        return OfficerService.ToResponse(officer, token, expiresAt);
     }
 
     /// <summary>

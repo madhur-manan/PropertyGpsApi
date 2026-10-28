@@ -7,7 +7,7 @@ namespace PropertyGpsApi.Tests;
 /// <summary>
 /// The value conversions WriteRoadsAsync applies before calling
 /// dbo.USP_IU_BtoA_SiteRoadDetails_Officer: roadStatus to Correction_Type_Value, roadId to
-/// the int @BtoA_RoadId, the 0/1 answers to bits, a payload file name to its stored URL,
+/// the text @BtoA_RoadId, the 0/1 answers to bits, a payload file name to its stored URL,
 /// and the shape of the KSRSAC warning.
 ///
 /// The helpers are internal (they used to be private and were reached by reflection), so a
@@ -17,7 +17,7 @@ namespace PropertyGpsApi.Tests;
 public sealed class RoadWriteMappingTests
 {
     private static string? CorrectionTypeValue(int? status) => VerificationSubmitService.CorrectionTypeValue(status);
-    private static int? ParseRoadId(string? roadId) => VerificationSubmitService.ParseRoadId(roadId);
+    private static string? RoadIdText(string? roadId) => VerificationSubmitService.RoadIdText(roadId);
     private static bool? AsBit(int? value) => VerificationSubmitService.AsBit(value);
 
     private static string? UrlFor(IReadOnlyDictionary<string, string> urls, string? name) =>
@@ -46,31 +46,32 @@ public sealed class RoadWriteMappingTests
     public void An_unknown_status_has_no_correction_value(int? status) =>
         Assert.Null(CorrectionTypeValue(status));
 
-    // ---- roadId -> @BtoA_RoadId (int) ---------------------------------------------------
-
-    [Theory]
-    [InlineData("976", 976)]
-    [InlineData("9320", 9320)]
-    [InlineData("999", 999)]       // the "not in the list" sentinel is a real value
-    [InlineData("0", 0)]           // S18a: a declared private road with no master road
-    [InlineData(" 279 ", 279)]
-    [InlineData("123456", 123456)]
-    public void A_numeric_road_id_is_passed_as_that_int(string roadId, int expected) =>
-        Assert.Equal(expected, ParseRoadId(roadId));
+    // ---- roadId -> @BtoA_RoadId (NVARCHAR(50)) -------------------------------------------
 
     /// <summary>
-    /// Anything that is not an int has no int to pass. Validate now refuses a non-blank one
-    /// (A3, see RoadFixValidationTests), so only a road with no id reaches the procedure
-    /// with NULL.
+    /// The id is sent as the text the street list gave, trimmed - never parsed. "999", the
+    /// "not in the list" sentinel, passes as it is.
     /// </summary>
+    [Theory]
+    [InlineData("976", "976")]
+    [InlineData("9320", "9320")]
+    [InlineData("999", "999")]       // the "not in the list" sentinel is a real value
+    [InlineData("0", "0")]           // S18a: a declared private road with no master road
+    [InlineData(" 279 ", "279")]
+    [InlineData("ST1001", "ST1001")] // street ids are text: nothing promises a number
+    [InlineData("97.6", "97.6")]
+    [InlineData("99999999999", "99999999999")]
+    [InlineData("007", "007")]       // never parsed, so a leading zero survives
+    public void A_road_id_is_passed_as_its_trimmed_text(string roadId, string expected) =>
+        Assert.Equal(expected, RoadIdText(roadId));
+
+    /// <summary>Only a road with no id at all reaches the procedure with NULL.</summary>
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    [InlineData("ST1001")]
-    [InlineData("97.6")]
-    [InlineData("99999999999")]
-    public void A_road_id_that_is_not_an_int_has_no_int(string? roadId) =>
-        Assert.Null(ParseRoadId(roadId));
+    [InlineData("   ")]
+    public void A_road_with_no_id_passes_null(string? roadId) =>
+        Assert.Null(RoadIdText(roadId));
 
     // ---- 0/1 answers -> bits ------------------------------------------------------------
 

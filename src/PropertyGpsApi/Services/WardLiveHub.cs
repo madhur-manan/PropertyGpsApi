@@ -16,12 +16,32 @@ internal sealed class WardLiveHub(ILogger<WardLiveHub> logger, TimeProvider cloc
     /// <summary>A phone that does not take a push within this long is dropped.</summary>
     internal static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(5);
 
-    private readonly ConcurrentDictionary<(int Zone, int Ward), ConcurrentDictionary<Guid, WardLiveConnection>> _wards = new();
+    private readonly ConcurrentDictionary<(int Ulb, string Ward), ConcurrentDictionary<Guid, WardLiveConnection>> _wards =
+        new(WardKeyComparer.Instance);
 
-    public WardLiveConnection Add(int zoneId, int wardId, long officerId, WebSocket socket)
+    /// <summary>
+    /// A ward's key: its ULB and its ward number trimmed. The comparer ignores case, so
+    /// "12A", " 12a " and "12a" are one ward - as they are to the database.
+    /// </summary>
+    internal static (int Ulb, string Ward) Key(int ulbCode, string? wardNumber) =>
+        (ulbCode, WardNumbers.Clean(wardNumber) ?? "");
+
+    internal sealed class WardKeyComparer : IEqualityComparer<(int Ulb, string Ward)>
     {
-        var connection = new WardLiveConnection(zoneId, wardId, officerId, socket, clock);
-        var ward = _wards.GetOrAdd((zoneId, wardId), _ => new ConcurrentDictionary<Guid, WardLiveConnection>());
+        public static readonly WardKeyComparer Instance = new();
+
+        public bool Equals((int Ulb, string Ward) x, (int Ulb, string Ward) y) =>
+            x.Ulb == y.Ulb && WardNumbers.Comparer.Equals(x.Ward, y.Ward);
+
+        public int GetHashCode((int Ulb, string Ward) key) =>
+            HashCode.Combine(key.Ulb, WardNumbers.Comparer.GetHashCode(key.Ward));
+    }
+
+    public WardLiveConnection Add(int ulbCode, string wardNumber, long officerId, WebSocket socket)
+    {
+        var key = Key(ulbCode, wardNumber);
+        var connection = new WardLiveConnection(key.Ulb, key.Ward, officerId, socket, clock);
+        var ward = _wards.GetOrAdd(key, _ => new ConcurrentDictionary<Guid, WardLiveConnection>());
 
         // One per officer per ward: an app reopened without the old socket closing (killed,
         // network switched) must not leave a stale one that receives everything twice. Ended,
@@ -35,28 +55,28 @@ internal sealed class WardLiveHub(ILogger<WardLiveHub> logger, TimeProvider cloc
 
         ward[connection.Id] = connection;
         logger.LogInformation(
-            "Ward live: officer {OfficerId} connected to {Zone}/{Ward} ({Count} open)",
-            officerId, zoneId, wardId, ward.Count);
+            "Ward live: officer {OfficerId} connected to {Ulb}/{Ward} ({Count} open)",
+            officerId, key.Ulb, key.Ward, ward.Count);
         return connection;
     }
 
     public void Remove(WardLiveConnection connection)
     {
-        if (_wards.TryGetValue((connection.ZoneId, connection.WardId), out var ward)
+        if (_wards.TryGetValue(Key(connection.UlbCode, connection.WardNumber), out var ward)
             && ward.TryRemove(connection.Id, out _))
             logger.LogInformation(
-                "Ward live: officer {OfficerId} disconnected from {Zone}/{Ward} ({Count} open)",
-                connection.OfficerId, connection.ZoneId, connection.WardId, ward.Count);
+                "Ward live: officer {OfficerId} disconnected from {Ulb}/{Ward} ({Count} open)",
+                connection.OfficerId, connection.UlbCode, connection.WardNumber, ward.Count);
     }
 
-    public int Count(int zoneId, int wardId) =>
-        _wards.TryGetValue((zoneId, wardId), out var ward) ? ward.Count : 0;
+    public int Count(int ulbCode, string wardNumber) =>
+        _wards.TryGetValue(Key(ulbCode, wardNumber), out var ward) ? ward.Count : 0;
 
-    public async Task<int> PublishAsync(int zoneId, int wardId, IReadOnlyList<WardSyncHolderDto> holders)
+    public async Task<int> PublishAsync(int ulbCode, string wardNumber, IReadOnlyList<WardSyncHolderDto> holders)
     {
         try
         {
-            if (holders.Count == 0 || !_wards.TryGetValue((zoneId, wardId), out var ward) || ward.IsEmpty)
+            if (holders.Count == 0 || !_wards.TryGetValue(Key(ulbCode, wardNumber), out var ward) || ward.IsEmpty)
                 return 0;
 
             var message = Serialize(holders);
@@ -70,13 +90,13 @@ internal sealed class WardLiveHub(ILogger<WardLiveHub> logger, TimeProvider cloc
 
             var delivered = sent.Count(ok => ok);
             logger.LogInformation(
-                "Ward live: pushed {Holders} holder(s) to {Delivered} of {Sockets} socket(s) in {Zone}/{Ward}",
-                holders.Count, delivered, targets.Count, zoneId, wardId);
+                "Ward live: pushed {Holders} holder(s) to {Delivered} of {Sockets} socket(s) in {Ulb}/{Ward}",
+                holders.Count, delivered, targets.Count, ulbCode, wardNumber);
             return delivered;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Ward live: push to {Zone}/{Ward} failed", zoneId, wardId);
+            logger.LogWarning(ex, "Ward live: push to {Ulb}/{Ward} failed", ulbCode, wardNumber);
             return 0;
         }
     }
@@ -92,8 +112,8 @@ internal sealed class WardLiveHub(ILogger<WardLiveHub> logger, TimeProvider cloc
     }
 }
 
-/// <summary>One phone's socket for one ward.</summary>
-internal sealed class WardLiveConnection(int zoneId, int wardId, long officerId, WebSocket socket, TimeProvider clock)
+/// <summary>One phone's socket for one ward (ULB + trimmed ward number).</summary>
+internal sealed class WardLiveConnection(int ulbCode, string wardNumber, long officerId, WebSocket socket, TimeProvider clock)
 {
     /// <summary>
     /// Close codes the app acts on (4000-4999 are the application's own). SessionEnded signs
@@ -109,8 +129,8 @@ internal sealed class WardLiveConnection(int zoneId, int wardId, long officerId,
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     public Guid Id { get; } = Guid.NewGuid();
-    public int ZoneId { get; } = zoneId;
-    public int WardId { get; } = wardId;
+    public int UlbCode { get; } = ulbCode;
+    public string WardNumber { get; } = wardNumber;
     public long OfficerId { get; } = officerId;
     public WebSocket Socket { get; } = socket;
 

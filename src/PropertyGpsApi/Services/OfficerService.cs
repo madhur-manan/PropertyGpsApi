@@ -11,6 +11,14 @@ using PropertyGpsApi.Interfaces;
 
 namespace PropertyGpsApi.Services;
 
+/// <summary>
+/// Officers, their sign-in and where they work - all in the master database (UDD_MASTERDB).
+///
+/// Property GPS works by ULB + ward NUMBER only. UDD_MASTERDB's mst_Officer has Ofcr_ULBId and
+/// Ofcr_WardId (the ward number, nvarchar) and no zone, corporation or division column, and
+/// its mst_AROMapping names ULBs and wards (ULBName_EN, WardNumber, WardName_EN) with no GBA
+/// or BBMP columns. Nothing here reads any of the columns that are gone.
+/// </summary>
 internal sealed class OfficerService(
     ISqlConnectionFactory connections,
     IOptions<StoredProcedureOptions> procedures,
@@ -55,6 +63,15 @@ internal sealed class OfficerService(
 
         return rows.Any();
     }
+
+    /// <summary>
+    /// USP_S_Officer_ValidateOTP: one row per active officer row for the mobile, roles 116/117
+    /// first, each carrying IsValidOtp. Zero rows is an unknown (or locked) officer.
+    ///
+    /// The procedure gives the officer's own ULB and ward but no names and no mapped wards, so
+    /// the jurisdictions are read after it (JurisdictionsAsync), the same way auth/me reads
+    /// them - the two routes always answer the same thing.
+    /// </summary>
     public async Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct)
     {
         var p = new DynamicParameters();
@@ -81,105 +98,92 @@ internal sealed class OfficerService(
             Mobile = first.Ofcr_MNo,
             Name = first.Ofcr_Name,
             RoleName = first.RoleName,
-            CorporationId = first.CorporationId,
-            CorporationName = first.CorporationName,
-            ZoneId = first.Ofcr_ZoneId,
-            WardId = first.Ofcr_WardId,
-            DivisionId = first.Ofcr_DivisionId,
-            // The procedure aliases ARO.GBAZoneID as ZoneId and GBAZoneName_En as ZoneName,
-            // so those columns are the JURISDICTION zone, not the officer own columns.
-            // Ofcr_ZoneId/Ofcr_WardId are only populated for ward- and zone-scoped roles
-            // (116, 125) and are null for the rest, hence the fallback.
-            //
-            // GAP: the procedure returns BBMPWardName but never BBMPWardId, so a ward here
-            // can be displayed but not used to build a fetch request. Ward ids have to come
-            // from the masters lookup until BBMP adds the column to the procedure.
-            Jurisdictions = rows.Select(r => new Jurisdiction
-            {
-                GbaZoneId = r.ZoneId,
-                GbaZoneName = r.ZoneName,
-                ZoneId = r.ZoneId ?? r.Ofcr_ZoneId,
-                ZoneName = r.ZoneName,
-                WardId = r.Ofcr_WardId,
-                WardName = r.BBMPWardName,
-                CorporationId = r.CorporationId,
-                CorporationName = r.CorporationName
-            }).ToList()
+            UlbCode = first.Ofcr_ULBId,
+            WardNumber = WardNumbers.Clean(first.Ofcr_WardId)
         };
 
-        // The procedure cannot give a correct ward id for a ward-scoped officer, so for
-        // those roles the jurisdictions are replaced with the wards they are mapped to -
-        // and only those, even when that is none. See ChooseJurisdictions.
-        var corrected = await WardScopedJurisdictionsAsync(connection, officer.OfficerId, ct);
         officer = officer with
         {
-            Jurisdictions = ChooseJurisdictions(officer.RoleId, corrected, officer.Jurisdictions)
+            Jurisdictions = await JurisdictionsAsync(connection, officer.OfficerId, officer.RoleId, ct)
         };
 
         return new OtpValidationResult(OtpValidationOutcome.Valid, officer);
     }
 
     /// <summary>
-    /// The wards a ward-scoped officer (role 116 or 117) actually holds, with their real
-    /// ward ids.
-    ///
-    /// Needed because USP_S_Officer_ValidateOTP joins on the right ward - via
-    /// mst_Ofcr_WardMapping, falling back to the officer's own Ofcr_WardId - but its SELECT
-    /// list returns USR.Ofcr_wardid and never ARO.BBMPWardId. An officer mapped to two
-    /// wards therefore came back as two rows with two NAMES and one shared ID. The app
-    /// listed both and downloaded whichever the id pointed at, so choosing the second ward
-    /// silently fetched the first one's properties.
-    ///
-    /// Observed on officer 1036: "C.V. Ramannagar" and "Domlur", both carrying ward 57,
-    /// where the true ids are 57 and 112.
-    ///
-    /// This mirrors the procedure's own 116/117 branch and adds the missing column. It also
-    /// takes the zone and corporation from the mapping row when it has them: the procedure
-    /// pairs every mapped ward with the officer's OWN zone, so a ward mapped in another zone
-    /// matched nothing and silently dropped out of the list.
-    /// The other role branches are left to the procedure rather than reimplemented here.
-    ///
-    /// FOR THE DBA: adding ARO.BBMPWardId to that SELECT would make this redundant and fix
-    /// it for every client, not just ours.
+    /// The ULB and ward names of a jurisdiction row <c>w</c>, from mst_AROMapping: one row per
+    /// street there, so TOP (1). Its text columns carry stray tabs and spaces, stripped as the
+    /// match and the names are read. The ULB name is the same on every row of a ULB.
     /// </summary>
-    private const string WardScopedJurisdictionsSql = """
-        SELECT DISTINCT
-            GbaZoneId       = aro.GBAZoneID,
-            GbaZoneName     = aro.GBAZoneName_En,
-            BbmpZoneId      = aro.BBMPZoneID,
-            BbmpZoneName    = aro.BBMPZoneName,
-            BbmpWardId      = aro.BBMPWardId,
-            BbmpWardName    = aro.BBMPWardName,
-            CorporationId   = aro.easthiULBNAME_CorpId,
-            CorporationName = aro.cityCorportationName
-        FROM dbo.mst_Officer o WITH (NOLOCK)
-        LEFT JOIN dbo.mst_Ofcr_WardMapping wm WITH (NOLOCK)
-               ON wm.Map_OfcrId = o.Ofcr_Id
-              AND wm.Map_OfcrRoleId = o.Ofcr_RoleId
-              AND ISNULL(wm.isActive, 1) = 1
-        JOIN dbo.mst_AROMapping aro WITH (NOLOCK)
-               ON aro.GBAZoneID = ISNULL(wm.Map_ZoneID, o.Ofcr_ZoneId)
-              AND aro.easthiULBNAME_CorpId = ISNULL(wm.Map_CorpId, o.Ofcr_CorporationId)
-              AND aro.BBMPWardId = ISNULL(wm.Map_WardId, o.Ofcr_WardId)
-        WHERE o.Ofcr_Id = @officerId
-          AND ISNULL(o.Ofcr_Active, 0) = 1
-          AND o.Ofcr_RoleId IN (116, 117)
-        ORDER BY aro.BBMPWardName;
+    private const string NamesSql = """
+        OUTER APPLY (SELECT TOP (1) UlbName = LTRIM(RTRIM(REPLACE(a.ULBName_EN, CHAR(9), '')))
+                     FROM dbo.mst_AROMapping a WITH (NOLOCK)
+                     WHERE a.ULBCode = w.UlbCode AND a.ULBName_EN IS NOT NULL) u
+        OUTER APPLY (SELECT TOP (1) WardName = LTRIM(RTRIM(REPLACE(a.WardName_EN, CHAR(9), '')))
+                     FROM dbo.mst_AROMapping a WITH (NOLOCK)
+                     WHERE a.ULBCode = w.UlbCode
+                       AND LTRIM(RTRIM(REPLACE(a.WardNumber, CHAR(9), ''))) = w.WardNumber) d
         """;
 
     /// <summary>
-    /// Role 116 (Case Worker) and 117 (RI): the field officers whose work is ward by ward.
+    /// The wards an RI (role 117, the only ward-scoped role) holds: their own ward
+    /// (mst_Officer.Ofcr_ULBId + Ofcr_WardId) plus every active mst_Ofcr_WardMapping row for
+    /// the officer in that role, whose Map_CorpId is the ULB code and Map_WardId the ward
+    /// number. Own ward first (Src 0); duplicates are dropped in ToJurisdictions.
+    ///
+    /// This is the list the app's dropdown shows and every own-ward check accepts - the ward
+    /// sync, the live socket, the submit, the media and the old fetch.
     /// </summary>
-    internal static bool IsWardScoped(int roleId) => roleId is 116 or 117;
+    internal const string WardScopedJurisdictionsSql = $$"""
+        WITH w AS (
+            SELECT Src = 0, UlbCode = o.Ofcr_ULBId,
+                   WardNumber = NULLIF(LTRIM(RTRIM(REPLACE(o.Ofcr_WardId, CHAR(9), ''))), '')
+            FROM dbo.mst_Officer o WITH (NOLOCK)
+            WHERE o.Ofcr_Id = @officerId AND ISNULL(o.Ofcr_Active, 0) = 1 AND o.Ofcr_RoleId = 117
+            UNION ALL
+            SELECT Src = 1, UlbCode = wm.Map_CorpId,
+                   WardNumber = NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(20), wm.Map_WardId))), '')
+            FROM dbo.mst_Officer o WITH (NOLOCK)
+            JOIN dbo.mst_Ofcr_WardMapping wm WITH (NOLOCK)
+                   ON wm.Map_OfcrId = o.Ofcr_Id
+                  AND wm.Map_OfcrRoleId = o.Ofcr_RoleId
+                  AND ISNULL(wm.isActive, 1) = 1
+            WHERE o.Ofcr_Id = @officerId AND ISNULL(o.Ofcr_Active, 0) = 1 AND o.Ofcr_RoleId = 117
+        )
+        SELECT w.Src, w.UlbCode, w.WardNumber, u.UlbName, d.WardName
+        FROM w
+        {{NamesSql}}
+        WHERE w.UlbCode > 0 AND w.WardNumber IS NOT NULL
+        ORDER BY w.Src, w.UlbCode, w.WardNumber;
+        """;
 
     /// <summary>
-    /// The zones/wards the app's dropdowns list.
+    /// Any other role's own ULB and ward (the ward may be absent above ward level). Mappings
+    /// are not read for them: mst_Ofcr_WardMapping is the ward officers' table.
+    /// </summary>
+    internal const string OwnWardSql = $$"""
+        WITH w AS (
+            SELECT Src = 0, UlbCode = o.Ofcr_ULBId,
+                   WardNumber = NULLIF(LTRIM(RTRIM(REPLACE(o.Ofcr_WardId, CHAR(9), ''))), '')
+            FROM dbo.mst_Officer o WITH (NOLOCK)
+            WHERE o.Ofcr_Id = @officerId AND ISNULL(o.Ofcr_Active, 0) = 1
+        )
+        SELECT w.Src, w.UlbCode, w.WardNumber, u.UlbName, d.WardName
+        FROM w
+        {{NamesSql}}
+        WHERE w.UlbCode > 0;
+        """;
+
+    /// <summary>Role 117 (RI): the field officer whose work is ward by ward.</summary>
+    internal static bool IsWardScoped(int roleId) => JurisdictionRules.IsWardScoped(roleId);
+
+    /// <summary>
+    /// The ULBs/wards the app's dropdowns list.
     ///
     /// A ward-scoped officer gets exactly the wards they are mapped to and nothing else -
-    /// even when that is none. Falling back to the procedure's rows used to hand such an
-    /// officer whatever the procedure joined to, which is not their mapping; an empty list
-    /// instead shows "No ward is mapped to your account" in the app, which is the truth and
-    /// is fixed in the master tables. Other roles keep what they had.
+    /// even when that is none. An empty list shows "No ward is mapped to your account" in
+    /// the app, which is the truth and is fixed in the master tables. Other roles get their
+    /// own ULB and ward.
     /// </summary>
     internal static IReadOnlyList<Jurisdiction> ChooseJurisdictions(
         int roleId, IReadOnlyList<Jurisdiction> mapped, IReadOnlyList<Jurisdiction> fallback)
@@ -188,33 +192,46 @@ internal sealed class OfficerService(
     public async Task<IReadOnlyList<Jurisdiction>> MappedWardsAsync(long officerId, CancellationToken ct)
     {
         await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
-        return await WardScopedJurisdictionsAsync(connection, officerId, ct);
+        return await QueryJurisdictionsAsync(connection, WardScopedJurisdictionsSql, officerId, ct);
     }
+
+    private static async Task<IReadOnlyList<Jurisdiction>> JurisdictionsAsync(
+        SqlConnection connection, long officerId, int roleId, CancellationToken ct)
+    {
+        var mapped = await QueryJurisdictionsAsync(connection, WardScopedJurisdictionsSql, officerId, ct);
+        // Read only when it can be used: a ward officer never falls back.
+        IReadOnlyList<Jurisdiction> fallback = IsWardScoped(roleId) || mapped.Count > 0
+            ? []
+            : await QueryJurisdictionsAsync(connection, OwnWardSql, officerId, ct);
+        return ChooseJurisdictions(roleId, mapped, fallback);
+    }
+
+    private static async Task<List<Jurisdiction>> QueryJurisdictionsAsync(
+        SqlConnection connection, string sql, long officerId, CancellationToken ct) =>
+        ToJurisdictions(await connection.QueryAsync<JurisdictionRow>(
+            new CommandDefinition(sql, new { officerId }, cancellationToken: ct)));
 
     /// <summary>
-    /// Empty for any role that is not ward-scoped, and for a ward-scoped officer whose
-    /// zone/ward does not resolve.
+    /// One jurisdiction per ULB + ward number, in the order read - the officer's own ward
+    /// first, so it is the one the token and the top of the sign-in reply carry. A mapping
+    /// row repeating the own ward (or another mapping) is dropped; ward numbers compare
+    /// trimmed and ignoring case. A row with no ULB is no jurisdiction.
     /// </summary>
-    private async Task<List<Jurisdiction>> WardScopedJurisdictionsAsync(
-        SqlConnection connection, long officerId, CancellationToken ct)
-    {
-        var rows = (await connection.QueryAsync<OfficerLoadRow>(
-            new CommandDefinition(WardScopedJurisdictionsSql, new { officerId }, cancellationToken: ct)))
-            .AsList();
+    internal static List<Jurisdiction> ToJurisdictions(IEnumerable<JurisdictionRow> rows) =>
+        rows.Where(r => r.UlbCode is > 0)
+            .OrderBy(r => r.Src)
+            .GroupBy(r => $"{r.UlbCode}|{WardNumbers.Clean(r.WardNumber)}", WardNumbers.Comparer)
+            .Select(g => g.First())
+            .Select(r => new Jurisdiction
+            {
+                UlbCode = r.UlbCode,
+                UlbName = Text(r.UlbName),
+                WardNumber = WardNumbers.Clean(r.WardNumber),
+                WardName = Text(r.WardName)
+            })
+            .ToList();
 
-        return rows.Select(r => new Jurisdiction
-        {
-            GbaZoneId = r.GbaZoneId,
-            GbaZoneName = r.GbaZoneName,
-            // The GBA id, never the BBMP one: every fetch is matched against MD_ZoneId.
-            ZoneId = r.GbaZoneId ?? r.BbmpZoneId,
-            ZoneName = r.BbmpZoneName ?? r.GbaZoneName,
-            WardId = r.BbmpWardId,
-            WardName = r.BbmpWardName,
-            CorporationId = r.CorporationId,
-            CorporationName = r.CorporationName
-        }).ToList();
-    }
+    private static string? Text(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
     /// The same officer and jurisdictions the OTP flow returns, without requiring a code.
@@ -225,40 +242,24 @@ internal sealed class OfficerService(
     /// reopening the app in the morning would be asked to sign in again despite holding a
     /// perfectly good token.
     ///
-    /// Reads the tables directly, which also closes the gap noted above: the procedure
-    /// returns BBMPWardName but never BBMPWardId, so its wards can be displayed but not
-    /// used to build a fetch request. Here both come back.
+    /// Only the RI row (role 117), lowest Ofcr_Id first - exactly the row
+    /// USP_S_Officer_ValidateOTP (db/41) signs in - so both routes pick the same officer.
     /// </summary>
     private const string LoadSql = """
-        SELECT o.Ofcr_Id, o.Ofcr_RoleId, o.Ofcr_MNo, o.Ofcr_Name, o.Ofcr_ZoneId, o.Ofcr_WardId,
-               CorporationId   = aro.easthiULBNAME_CorpId,
-               CorporationName = aro.cityCorportationName,
-               GbaZoneId       = aro.GBAZoneID,
-               GbaZoneName     = aro.GBAZoneName_En,
-               BbmpZoneId      = aro.BBMPZoneID,
-               BbmpZoneName    = aro.BBMPZoneName,
-               BbmpWardId      = aro.BBMPWardId,
-               BbmpWardName    = aro.BBMPWardName
+        SELECT o.Ofcr_Id, o.Ofcr_RoleId, o.Ofcr_MNo, o.Ofcr_Name, o.Ofcr_ULBId,
+               Ofcr_WardId = NULLIF(LTRIM(RTRIM(REPLACE(o.Ofcr_WardId, CHAR(9), ''))), '')
         FROM dbo.mst_Officer o WITH (NOLOCK)
-        LEFT JOIN dbo.mst_AROMapping aro WITH (NOLOCK)
-               ON aro.GBAZoneID = o.Ofcr_ZoneId AND aro.BBMPWardId = o.Ofcr_WardId
-        WHERE o.Ofcr_MNo = @mobile AND ISNULL(o.Ofcr_Active, 0) = 1;
+        WHERE o.Ofcr_MNo = @mobile AND o.Ofcr_RoleId = 117 AND ISNULL(o.Ofcr_Active, 0) = 1
+        ORDER BY o.Ofcr_Id;
         """;
 
     public async Task<Officer?> LoadAsync(string mobile, CancellationToken ct)
     {
         await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
-        var rows = (await connection.QueryAsync<OfficerLoadRow>(
-            new CommandDefinition(LoadSql, new { mobile }, cancellationToken: ct))).AsList();
+        var first = await connection.QueryFirstOrDefaultAsync<OfficerLoadRow>(
+            new CommandDefinition(LoadSql, new { mobile }, cancellationToken: ct));
 
-        if (rows.Count == 0) return null;
-        var first = rows[0];
-
-        // Same correction as the sign-in path, and for a second reason here: this query
-        // joins on o.Ofcr_WardId alone and never consults mst_Ofcr_WardMapping, so a
-        // two-ward officer saw both wards after signing in and only one after reopening
-        // the app. The two routes now answer the same thing.
-        var corrected = await WardScopedJurisdictionsAsync(connection, first.Ofcr_Id, ct);
+        if (first is null) return null;
 
         return new Officer
         {
@@ -266,32 +267,9 @@ internal sealed class OfficerService(
             RoleId = first.Ofcr_RoleId,
             Mobile = first.Ofcr_MNo,
             Name = first.Ofcr_Name,
-            CorporationId = first.CorporationId,
-            CorporationName = first.CorporationName,
-            ZoneId = first.Ofcr_ZoneId,
-            WardId = first.Ofcr_WardId,
-            Jurisdictions = ChooseJurisdictions(first.Ofcr_RoleId, corrected, rows
-                .Where(r => r.BbmpWardId is not null)
-                .GroupBy(r => (r.GbaZoneId, r.BbmpWardId))
-                .Select(g => g.First())
-                .Select(r => new Jurisdiction
-                {
-                    GbaZoneId = r.GbaZoneId,
-                    GbaZoneName = r.GbaZoneName,
-                    // zoneId is what the device sends back on every ward request, and the
-                    // fetch procedure matches it against MD_ZoneId - a GBA zone id. This
-                    // returned the BBMP zone instead (Mahadevapura: 2 rather than 102), so
-                    // an officer who reopened the app and had their session restored through
-                    // this path asked for a zone that holds no applications and was told
-                    // their ward was empty. The OTP path has always returned the GBA id;
-                    // the two disagreeing is what made the bug invisible until a restart.
-                    ZoneId = r.GbaZoneId ?? r.BbmpZoneId,
-                    ZoneName = r.BbmpZoneName ?? r.GbaZoneName,
-                    WardId = r.BbmpWardId,
-                    WardName = r.BbmpWardName,
-                    CorporationId = r.CorporationId,
-                    CorporationName = r.CorporationName
-                }).ToList())
+            UlbCode = first.Ofcr_ULBId,
+            WardNumber = WardNumbers.Clean(first.Ofcr_WardId),
+            Jurisdictions = await JurisdictionsAsync(connection, first.Ofcr_Id, first.Ofcr_RoleId, ct)
         };
     }
 
@@ -301,16 +279,8 @@ internal sealed class OfficerService(
         public int Ofcr_RoleId { get; init; }
         public string? Ofcr_MNo { get; init; }
         public string? Ofcr_Name { get; init; }
-        public int? Ofcr_ZoneId { get; init; }
-        public int? Ofcr_WardId { get; init; }
-        public int? CorporationId { get; init; }
-        public string? CorporationName { get; init; }
-        public int? GbaZoneId { get; init; }
-        public string? GbaZoneName { get; init; }
-        public int? BbmpZoneId { get; init; }
-        public string? BbmpZoneName { get; init; }
-        public int? BbmpWardId { get; init; }
-        public string? BbmpWardName { get; init; }
+        public int? Ofcr_ULBId { get; init; }
+        public string? Ofcr_WardId { get; init; }
     }
 
     public async Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct)
@@ -334,7 +304,7 @@ internal sealed class OfficerService(
     /// The `auth/me` answer: who this token belongs to, and where they work.
     ///
     /// The app is offline-first and keeps its session across restarts, but a JWT
-    /// carries claims rather than names — it knows the ward id, not that the
+    /// carries claims rather than names — it knows the ward number, not that the
     /// ward is Hoodi. Without this an officer reopening the app would be asked
     /// to sign in again despite holding a valid token, purely because the client
     /// had forgotten the labels.
@@ -354,32 +324,41 @@ internal sealed class OfficerService(
             ?? throw ApiException.Unauthorized(
                 "Your account is no longer active. Please sign in again.");
 
+        // No token is minted here. This answers who the caller already is;
+        // issuing a fresh one would turn a lookup into a silent, unbounded
+        // session extension.
+        return ToResponse(officer, token: "", expiresAt: default);
+    }
+
+    /// <summary>
+    /// The sign-in reply, shared by otp/verify and auth/me so the two cannot drift. The
+    /// top-level ULB and ward are the first jurisdiction's - the pair the token carries.
+    /// The zone, ward-id and corporation fields older builds read are left null.
+    /// </summary>
+    internal static VerifyOtpResponse ToResponse(Officer officer, string token, DateTimeOffset expiresAt)
+    {
+        var jurisdictions = officer.Jurisdictions.Where(j => j.UlbCode is > 0).ToList();
+        var first = jurisdictions.FirstOrDefault();
+
         return new VerifyOtpResponse
         {
-            // No token is minted here. This answers who the caller already is;
-            // issuing a fresh one would turn a lookup into a silent, unbounded
-            // session extension.
-            Token = "",
-            ExpiresAt = default,
+            Token = token,
+            ExpiresAt = expiresAt,
             UserId = officer.OfficerId,
             RoleId = officer.RoleId,
             Mobile = officer.Mobile,
             UserName = officer.Name,
             Designation = officer.RoleName,
-            CorporationId = officer.CorporationId,
-            CorporationName = officer.CorporationName,
-            ZoneId = officer.ZoneId,
-            WardId = officer.WardId,
-            Jurisdictions = officer.Jurisdictions.Select(j => new JurisdictionDto
+            UlbCode = first?.UlbCode,
+            UlbName = first?.UlbName,
+            WardNumber = first?.WardNumber,
+            WardName = first?.WardName,
+            Jurisdictions = jurisdictions.Select(j => new JurisdictionDto
             {
-                GbaZoneId = j.GbaZoneId,
-                GbaZoneName = j.GbaZoneName,
-                ZoneId = j.ZoneId,
-                ZoneName = j.ZoneName,
-                WardId = j.WardId,
-                WardName = j.WardName,
-                CorporationId = j.CorporationId,
-                CorporationName = j.CorporationName
+                UlbCode = j.UlbCode!.Value,
+                UlbName = j.UlbName,
+                WardNumber = j.WardNumber,
+                WardName = j.WardName
             }).ToList()
         };
     }
