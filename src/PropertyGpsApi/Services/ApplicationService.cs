@@ -15,22 +15,26 @@ internal sealed class ApplicationService(
     ISqlConnectionFactory connections,
     IOptions<StoredProcedureOptions> procedures,
     IWardLiveHub live,
-    ILogger<ApplicationService> logger) : IApplicationService
+    ILogger<ApplicationService> logger,
+    IOptions<SurveyOptions>? survey = null) : IApplicationService
 {
+    /// <summary>
+    /// Whether the assign procedure takes @MaxPending (db/45). Asked once per process: a
+    /// database without db/45 (live, until the DBA runs it) must keep working, at its own 2.
+    /// </summary>
+    private static bool? hasMaxPending;
+
+    private const string HasMaxPendingSql =
+        "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.parameters WHERE object_id = OBJECT_ID(@proc) AND name = N'@MaxPending') THEN 1 ELSE 0 END";
+
     public async Task<AssignOutcome> AssignAsync(
         int appId, long officerId, int roleId, string? officerName, bool assign, CancellationToken ct)
     {
-        var p = new DynamicParameters();
-        p.Add("@AppId", appId, DbType.Int32);
-        p.Add("@Arch_Id", officerId, DbType.Int32);
-        p.Add("@Arch_Role", roleId, DbType.Int32);
-        p.Add("@Arch_Name", officerName ?? "", DbType.String, size: 150);
-        p.Add("@Status", "Pending", DbType.String, size: 30);
-        // IsActive is the assign/unassign switch: 1 inserts a new holding, 0 releases the
-        // officer's existing Pending row.
-        p.Add("@IsActive", assign, DbType.Boolean);
-
         await using var connection = await connections.OpenAsync(DbTarget.B2A, ct);
+
+        var limit = survey?.Value.MaxAllottedPerOfficer ?? new SurveyOptions().MaxAllottedPerOfficer;
+        var p = AssignParameters(appId, officerId, roleId, officerName, assign,
+            await HasMaxPendingAsync(connection, limit, ct) ? limit : null);
 
         if (assign)
         {
@@ -58,6 +62,42 @@ internal sealed class ApplicationService(
             // Not the request token: a phone that hangs up now must not turn a done allot into an error.
             await PublishHolderAsync(connection, appId);
         return outcome;
+    }
+
+    /// <summary>
+    /// The assign procedure's parameters. <paramref name="maxPending"/> is added only when the
+    /// procedure takes it (db/45); an unknown parameter would make the call fail.
+    /// </summary>
+    internal static DynamicParameters AssignParameters(
+        int appId, long officerId, int roleId, string? officerName, bool assign, int? maxPending)
+    {
+        var p = new DynamicParameters();
+        p.Add("@AppId", appId, DbType.Int32);
+        p.Add("@Arch_Id", officerId, DbType.Int32);
+        p.Add("@Arch_Role", roleId, DbType.Int32);
+        p.Add("@Arch_Name", officerName ?? "", DbType.String, size: 150);
+        p.Add("@Status", "Pending", DbType.String, size: 30);
+        // IsActive is the assign/unassign switch: 1 inserts a new holding, 0 releases the
+        // officer's existing Pending row.
+        p.Add("@IsActive", assign, DbType.Boolean);
+        if (maxPending is { } max)
+            p.Add("@MaxPending", max, DbType.Int32);
+        return p;
+    }
+
+    private async Task<bool> HasMaxPendingAsync(System.Data.Common.DbConnection connection, int limit, CancellationToken ct)
+    {
+        if (hasMaxPending is { } known) return known;
+
+        var has = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            HasMaxPendingSql, new { proc = procedures.Value.AssignApplication }, commandTimeout: 10,
+            cancellationToken: ct)) == 1;
+        hasMaxPending = has;
+        if (!has && limit != 2)
+            logger.LogWarning(
+                "Survey:MaxAllottedPerOfficer is {Limit}, but {Procedure} has no @MaxPending (db/45 not run); its own 2 applies",
+                limit, procedures.Value.AssignApplication);
+        return has;
     }
 
     /// <summary>

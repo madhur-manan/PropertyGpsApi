@@ -56,6 +56,20 @@ public sealed class SurveyOptions
     /// (Survey:MinMixedExtentPercent) and recycle the app pool; 0 means only "above 0".
     /// </summary>
     [Range(0, 50)] public double MinMixedExtentPercent { get; init; } = 5;
+
+    /// <summary>
+    /// How many completed surveys may wait on a phone for a sync (the Completed tab, not yet
+    /// uploaded). Sent to the phone with every ward sync; the phone refuses to complete another
+    /// once this many are waiting.
+    /// </summary>
+    [Range(1, 50)] public int MaxCompletedOffline { get; init; } = 5;
+
+    /// <summary>
+    /// How many applications one RI may hold (Pending) at once. Passed to
+    /// USP_IU_Architect_AssignedApp as @MaxPending - only once db/45 has given it that
+    /// parameter; before that the procedure's own 2 applies.
+    /// </summary>
+    [Range(1, 20)] public int MaxAllottedPerOfficer { get; init; } = 2;
 }
 
 public sealed class OtpOptions

@@ -91,6 +91,12 @@ public sealed class WardSyncResponse
     /// </summary>
     [JsonPropertyName("minMixedExtentPercent")] public double MinMixedExtentPercent { get; set; }
 
+    /// <summary>Survey:MaxCompletedOffline - completed surveys that may wait on the phone for a sync.</summary>
+    [JsonPropertyName("maxCompletedOffline")] public int MaxCompletedOffline { get; set; }
+
+    /// <summary>Survey:MaxAllottedPerOfficer - applications one RI may hold at once.</summary>
+    [JsonPropertyName("maxAllottedPerOfficer")] public int MaxAllottedPerOfficer { get; set; }
+
     /// <summary>How many the phone lacks before this batch is applied.</summary>
     [JsonPropertyName("missingCount")] public int MissingCount { get; init; }
 

@@ -29,6 +29,8 @@ public sealed class WardSyncController(IWardSyncService wardSync, IOptions<Surve
     {
         var result = await wardSync.PageAsync(request, User.RequireLong(GpsClaims.UserId), ct);
         result.MinMixedExtentPercent = survey.Value.MinMixedExtentPercent;
+        result.MaxCompletedOffline = survey.Value.MaxCompletedOffline;
+        result.MaxAllottedPerOfficer = survey.Value.MaxAllottedPerOfficer;
 
         return Ok(ApiResponse<WardSyncResponse>.Ok(
             result,
