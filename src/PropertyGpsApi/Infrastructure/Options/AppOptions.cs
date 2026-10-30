@@ -70,6 +70,13 @@ public sealed class SurveyOptions
     /// parameter; before that the procedure's own 2 applies.
     /// </summary>
     [Range(1, 20)] public int MaxAllottedPerOfficer { get; init; } = 2;
+
+    /// <summary>
+    /// Whether signing out on the phone gives back (unassigns) every application the RI still
+    /// holds (user, 2026-10-29). Off by default: signing out then only sends the surveys.
+    /// Sent to the phone with every ward sync. The card's own Allot / Unassign are not affected.
+    /// </summary>
+    public bool UnassignOnSignOut { get; init; }
 }
 
 public sealed class OtpOptions

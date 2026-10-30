@@ -126,22 +126,37 @@ internal sealed class OfficerService(
         """;
 
     /// <summary>
+    /// The column of mst_Ofcr_WardMapping that holds the ULB code. The table was rebuilt on
+    /// the test DB server on 2026-10-29 with Map_ULBId in place of Map_CorpId; other
+    /// databases (the laptop copy, possibly live) still have Map_CorpId. Asked on every read
+    /// - one cheap metadata lookup - so a table changed while the API runs is followed at once.
+    /// </summary>
+    internal const string MappingUlbColumnSql =
+        "SELECT CASE WHEN COL_LENGTH(N'dbo.mst_Ofcr_WardMapping', N'Map_ULBId') IS NOT NULL THEN N'Map_ULBId' ELSE N'Map_CorpId' END";
+
+    /// <summary>
     /// The wards an RI (role 117, the only ward-scoped role) holds: their own ward
     /// (mst_Officer.Ofcr_ULBId + Ofcr_WardId) plus every active mst_Ofcr_WardMapping row for
-    /// the officer in that role, whose Map_CorpId is the ULB code and Map_WardId the ward
-    /// number. Own ward first (Src 0); duplicates are dropped in ToJurisdictions.
+    /// the officer in that role, whose <paramref name="ulbColumn"/> (Map_ULBId, or Map_CorpId
+    /// on the older table) is the ULB code and Map_WardId the ward number. Own ward first
+    /// (Src 0); duplicates are dropped in ToJurisdictions.
     ///
     /// This is the list the app's dropdown shows and every own-ward check accepts - the ward
     /// sync, the live socket, the submit, the media and the old fetch.
     /// </summary>
-    internal const string WardScopedJurisdictionsSql = $$"""
+    internal static string WardScopedJurisdictionsSql(string ulbColumn) =>
+        ulbColumn is "Map_ULBId" or "Map_CorpId"
+            ? WardScopedJurisdictionsTemplate.Replace("{ulbColumn}", ulbColumn, StringComparison.Ordinal)
+            : throw new ArgumentOutOfRangeException(nameof(ulbColumn), ulbColumn, "Not a ULB column of mst_Ofcr_WardMapping.");
+
+    private const string WardScopedJurisdictionsTemplate = $$"""
         WITH w AS (
             SELECT Src = 0, UlbCode = o.Ofcr_ULBId,
                    WardNumber = NULLIF(LTRIM(RTRIM(REPLACE(o.Ofcr_WardId, CHAR(9), ''))), '')
             FROM dbo.mst_Officer o WITH (NOLOCK)
             WHERE o.Ofcr_Id = @officerId AND ISNULL(o.Ofcr_Active, 0) = 1 AND o.Ofcr_RoleId = 117
             UNION ALL
-            SELECT Src = 1, UlbCode = wm.Map_CorpId,
+            SELECT Src = 1, UlbCode = wm.{ulbColumn},
                    WardNumber = NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(20), wm.Map_WardId))), '')
             FROM dbo.mst_Officer o WITH (NOLOCK)
             JOIN dbo.mst_Ofcr_WardMapping wm WITH (NOLOCK)
@@ -192,13 +207,17 @@ internal sealed class OfficerService(
     public async Task<IReadOnlyList<Jurisdiction>> MappedWardsAsync(long officerId, CancellationToken ct)
     {
         await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
-        return await QueryJurisdictionsAsync(connection, WardScopedJurisdictionsSql, officerId, ct);
+        return await QueryJurisdictionsAsync(connection, await WardScopedSqlAsync(connection, ct), officerId, ct);
     }
+
+    private static async Task<string> WardScopedSqlAsync(SqlConnection connection, CancellationToken ct) =>
+        WardScopedJurisdictionsSql(await connection.ExecuteScalarAsync<string>(
+            new CommandDefinition(MappingUlbColumnSql, cancellationToken: ct)) ?? "Map_CorpId");
 
     private static async Task<IReadOnlyList<Jurisdiction>> JurisdictionsAsync(
         SqlConnection connection, long officerId, int roleId, CancellationToken ct)
     {
-        var mapped = await QueryJurisdictionsAsync(connection, WardScopedJurisdictionsSql, officerId, ct);
+        var mapped = await QueryJurisdictionsAsync(connection, await WardScopedSqlAsync(connection, ct), officerId, ct);
         // Read only when it can be used: a ward officer never falls back.
         IReadOnlyList<Jurisdiction> fallback = IsWardScoped(roleId) || mapped.Count > 0
             ? []

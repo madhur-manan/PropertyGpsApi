@@ -104,7 +104,24 @@ public class UlbWardJurisdictionTests
 
     public class TheJurisdictionQuery
     {
-        private static readonly string Sql = OfficerService.WardScopedJurisdictionsSql;
+        private static readonly string Sql = OfficerService.WardScopedJurisdictionsSql("Map_CorpId");
+
+        /// <summary>
+        /// mst_Ofcr_WardMapping was rebuilt on the test DB server (2026-10-29) with Map_ULBId in
+        /// place of Map_CorpId. The column is asked of the database, and either is read.
+        /// </summary>
+        [Fact]
+        public void Reads_the_ulb_from_whichever_column_the_table_has()
+        {
+            Assert.Contains("UlbCode = wm.Map_ULBId", OfficerService.WardScopedJurisdictionsSql("Map_ULBId"));
+            Assert.Contains("UlbCode = wm.Map_CorpId", OfficerService.WardScopedJurisdictionsSql("Map_CorpId"));
+            Assert.Contains("COL_LENGTH(N'dbo.mst_Ofcr_WardMapping', N'Map_ULBId')", OfficerService.MappingUlbColumnSql);
+        }
+
+        /// <summary>Only the two known column names ever reach the SQL text.</summary>
+        [Fact]
+        public void Refuses_any_other_column_name() =>
+            Assert.Throws<ArgumentOutOfRangeException>(() => OfficerService.WardScopedJurisdictionsSql("x; DROP TABLE t"));
 
         [Fact]
         public void Reads_the_officers_own_ulb_and_ward_number()
@@ -137,7 +154,7 @@ public class UlbWardJurisdictionTests
         [Fact]
         public void No_officer_query_reads_a_column_that_is_gone()
         {
-            foreach (var sql in new[] { OfficerService.WardScopedJurisdictionsSql, OfficerService.OwnWardSql })
+            foreach (var sql in new[] { OfficerService.WardScopedJurisdictionsSql("Map_ULBId"), OfficerService.WardScopedJurisdictionsSql("Map_CorpId"), OfficerService.OwnWardSql })
             {
                 foreach (var gone in new[] { "Ofcr_ZoneId", "Ofcr_CorporationId", "Ofcr_DivisionId", "GBA", "BBMP", "Map_ZoneID", "easthi" })
                     Assert.DoesNotContain(gone, sql, StringComparison.OrdinalIgnoreCase);

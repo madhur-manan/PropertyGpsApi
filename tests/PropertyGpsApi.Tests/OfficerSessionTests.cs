@@ -64,7 +64,7 @@ public class OfficerSessionTests
     }
 
     [Fact]
-    public async Task A_phone_other_than_the_registered_one_is_refused()
+    public async Task A_phone_other_than_the_signed_in_one_is_refused()
     {
         var sessions = new FakeSessions { Refuses = true };
         var tokens = new RecordingTokens(sessions);
@@ -75,8 +75,25 @@ public class OfficerSessionTests
         Assert.Equal(StatusCodes.Status422UnprocessableEntity, ex.StatusCode);
         Assert.Equal(ApiErrorCodes.SignedInElsewhere, ex.Code);
         Assert.True(ex.Recoverable);
-        Assert.Contains("registered to another device", ex.Message);
+        Assert.Contains("signed in on another phone. Sign out there first", ex.Message);
         Assert.Null(tokens.IssuedFor);
+    }
+
+    /// <summary>
+    /// One phone at a time (user, 2026-10-29): another phone is refused only while a sign-in
+    /// is live; after a sign-out the next phone becomes the officer's. A lost phone's sign-in
+    /// stays live until an administrator clears SessionId - no time limit. (Run against SQL
+    /// Server on a temp table: refused while A is signed in, allowed and moved after A signs
+    /// out, refused for A while B is signed in, allowed after the SessionId is cleared.)
+    /// </summary>
+    [Fact]
+    public void Another_phone_is_refused_only_while_a_sign_in_is_live()
+    {
+        var sql = OfficerSessionStore.StartSql;
+        Assert.Contains("@Enforce = 1 AND @curSession IS NOT NULL AND @curDevice IS NOT NULL", sql);
+        Assert.Contains("DeviceId = ISNULL(@DeviceId, DeviceId)", sql);
+        Assert.DoesNotContain("StartedAt <", sql);
+        Assert.DoesNotContain("DATEADD", sql);
     }
 
     [Fact]

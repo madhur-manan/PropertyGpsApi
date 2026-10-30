@@ -18,6 +18,14 @@ public sealed class SurveyLimitsTests
         var options = new SurveyOptions();
         Assert.Equal(5, options.MaxCompletedOffline);
         Assert.Equal(2, options.MaxAllottedPerOfficer);
+        Assert.False(options.UnassignOnSignOut, "signing out unassigns nothing until it is switched on");
+    }
+
+    [Fact]
+    public void The_switch_is_named_as_the_phone_reads_it()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new PropertyGpsApi.Models.WardSyncResponse { UnassignOnSignOut = true });
+        Assert.Contains("\"unassignOnSignOut\":true", json);
     }
 
     [Theory]
