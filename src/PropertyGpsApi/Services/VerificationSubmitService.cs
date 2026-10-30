@@ -33,7 +33,8 @@ internal sealed class VerificationSubmitService(
     IMediaStore media,
     IOptions<StoredProcedureOptions> procedures,
     ILogger<VerificationSubmitService> logger,
-    IOptions<SurveyOptions>? survey = null) : IVerificationSubmitService
+    IOptions<SurveyOptions>? survey = null,
+    RiDocumentWriter? documents = null) : IVerificationSubmitService
 {
     /// <summary>The Mixed-use minimum share, in percent (SurveyOptions).</summary>
     private double MinMixedExtentPercent => survey?.Value.MinMixedExtentPercent ?? new SurveyOptions().MinMixedExtentPercent;
@@ -89,6 +90,11 @@ internal sealed class VerificationSubmitService(
             // interleave the road writes.
             await TakeApplicationLockAsync(connection, transaction, request.ApplicationId, ct);
 
+            // Every BtoA_DocumentTran row this submit inserts or changes is stamped at or after
+            // this; RiDocumentWriter copies exactly those into the history table.
+            var submitStarted = await connection.ExecuteScalarAsync<DateTime>(new CommandDefinition(
+                "SELECT GETDATE()", null, transaction, 30, CommandType.Text, cancellationToken: ct));
+
             // The procedures silently do nothing for an application they cannot find, and
             // USP_IU_BtoA_MainApp_Officer reports that only in its first result set. Reading
             // App_Id up front turns "unknown application" into one clear answer, and we need
@@ -140,6 +146,12 @@ internal sealed class VerificationSubmitService(
                     connection, transaction, request.ApplicationId, appId.Value, officerId, roleId, ct);
             var assignmentClosed = await CompleteAssignmentAsync(
                 connection, transaction, appId.Value, officerId, roleId, ct);
+
+            // The RI's captures as BtoA_DocumentTran rows (types 13, 12, 9), the private road
+            // documents given their Scality key, and a history row for each (user, 2026-10-30).
+            if (documents is not null)
+                await documents.WriteAsync(connection, transaction, request, mediaUrls, appId.Value,
+                    officerId, roleId, submitStarted, ct);
 
             // Read the status back rather than reporting a constant. The procedure decides
             // it from the role, so a copy here could drift from what was actually written

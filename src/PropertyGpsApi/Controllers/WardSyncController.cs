@@ -31,6 +31,7 @@ public sealed class WardSyncController(IWardSyncService wardSync, IOptions<Surve
         result.MinMixedExtentPercent = survey.Value.MinMixedExtentPercent;
         result.MaxCompletedOffline = survey.Value.MaxCompletedOffline;
         result.MaxAllottedPerOfficer = survey.Value.MaxAllottedPerOfficer;
+        result.UnassignOnSignOut = survey.Value.UnassignOnSignOut;
 
         return Ok(ApiResponse<WardSyncResponse>.Ok(
             result,

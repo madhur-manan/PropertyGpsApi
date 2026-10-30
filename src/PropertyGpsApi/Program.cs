@@ -12,6 +12,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using PropertyGpsApi;
 using PropertyGpsApi.Common;
+using PropertyGpsApi.Infrastructure;
 using PropertyGpsApi.Endpoints;
 using PropertyGpsApi.Interfaces;
 using PropertyGpsApi.Services;
@@ -148,11 +149,29 @@ switch (otpSender)
 // Where captured photographs go. BBMP intend a separate object store; until its endpoint
 // exists LocalDisk is the real implementation, and swapping it is a config value plus a
 // new IMediaStore - nothing in the submit flow changes.
+// BBMP's Scality document store (2026-10-30): always available for reading the citizen's
+// documents; with Media:Store = "Scality" the RI's photographs are stored there too.
+builder.Services.AddOptions<ScalityOptions>().Bind(builder.Configuration.GetSection(ScalityOptions.Section));
+builder.Services.AddHttpClient<IScalityClient, ScalityClient>((sp, http) =>
+    http.Timeout = TimeSpan.FromSeconds(Math.Max(10, sp.GetRequiredService<IOptions<ScalityOptions>>().Value.TimeoutSeconds)));
+builder.Services.AddSingleton<ScalityLinks>();
+builder.Services.AddSingleton<RiDocumentWriter>();
+builder.Services.AddScoped<ICitizenDocumentService, CitizenDocumentService>();
+builder.Services.AddSingleton<LocalDiskMediaStore>();
+
 var mediaStore = builder.Configuration[$"{MediaOptions.Section}:Store"] ?? "LocalDisk";
 switch (mediaStore)
 {
     case "LocalDisk":
-        builder.Services.AddSingleton<IMediaStore, LocalDiskMediaStore>();
+        builder.Services.AddSingleton<IMediaStore>(sp => sp.GetRequiredService<LocalDiskMediaStore>());
+        break;
+    case "Scality":
+        // Refuse to start rather than fail every submit later.
+        if (string.IsNullOrWhiteSpace(builder.Configuration[$"{ScalityOptions.Section}:ClientId"])
+            || string.IsNullOrWhiteSpace(builder.Configuration[$"{ScalityOptions.Section}:ClientSecret"]))
+            throw new InvalidOperationException(
+                "Media:Store is Scality but Scality:ClientId / Scality:ClientSecret are not set (web.config: Scality__ClientId, Scality__ClientSecret).");
+        builder.Services.AddScoped<IMediaStore, ScalityMediaStore>();
         break;
     default:
         throw new InvalidOperationException("Unknown Media:Store value: " + mediaStore);
@@ -160,9 +179,19 @@ switch (mediaStore)
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
+// The RI call log (db/46): one dbo.GpsApiLog row per fetch, submit, allot / unassign and
+// sign-in. Its filter runs after model binding, so it logs the decrypted request.
+builder.Services.AddOptions<ApiLogOptions>().Bind(builder.Configuration.GetSection(ApiLogOptions.Section));
+builder.Services.AddSingleton<IApiCallLogWriter, ApiCallLogWriter>();
+builder.Services.AddSingleton<ApiCallLogFilter>();
+
 // The decryption filter is a global resource filter: after authentication, authorization and
 // the per-action size limits, before model binding - so no controller ever sees a sealed body.
-builder.Services.AddControllers(mvc => mvc.Filters.AddService<RequestBodyDecryptionFilter>())
+builder.Services.AddControllers(mvc =>
+    {
+        mvc.Filters.AddService<RequestBodyDecryptionFilter>();
+        mvc.Filters.AddService<ApiCallLogFilter>();
+    })
     .AddJsonOptions(json =>
     {
         // Pinned to Never: null means "not answered" on this contract and is distinct

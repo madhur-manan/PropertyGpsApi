@@ -7,19 +7,21 @@ namespace PropertyGpsApi.Services;
 
 /// <summary>
 /// dbo.GpsOfficerSession in the master database, beside mst_Officer and Login_Tran.
-/// One row per officer: DeviceId is the phone the officer is bound to (set by their first
-/// sign-in, kept through sign-outs, cleared only by an administrator), SessionId the
-/// sign-in currently live on it. Three statements, no procedures.
+/// One row per officer: DeviceId is the phone the officer last signed in on, SessionId the
+/// sign-in live on it (NULL once they sign out). One phone at a time (user, 2026-10-29):
+/// while a sign-in is live, every other phone is refused; after a sign-out the next phone
+/// to sign in becomes theirs. A phone lost while signed in stays theirs until an
+/// administrator clears SessionId - there is no time limit. Three statements, no procedures.
 /// </summary>
 internal sealed class OfficerSessionStore(ISqlConnectionFactory connections) : IOfficerSessionStore
 {
     /// <summary>The longest phone id kept. The app sends "a:" plus a 16-hex ANDROID_ID.</summary>
     internal const int MaxDeviceIdLength = 64;
 
-    // Read and write under one lock, so two phones signing in together cannot both bind.
-    // An officer with no phone yet (no row, or DeviceId cleared by an administrator) is
-    // bound to this one. Any other phone is refused for good. The binding is never moved
-    // here - not even with the check switched off. Returns 1 when started, 0 when refused.
+    // Read and write under one lock, so two phones signing in together cannot both start.
+    // Refused only while a sign-in is live (SessionId set) on a different phone. Otherwise
+    // this phone becomes the officer's (DeviceId moves to it; a sign-in that sends no
+    // phone id keeps the one on file). Returns 1 when started, 0 when refused.
     internal const string StartSql = """
         SET XACT_ABORT ON;
         BEGIN TRAN;
@@ -29,7 +31,7 @@ internal sealed class OfficerSessionStore(ISqlConnectionFactory connections) : I
         WHERE OfficerId = @OfficerId;
 
         DECLARE @blocked bit = CASE
-            WHEN @Enforce = 1 AND @curDevice IS NOT NULL
+            WHEN @Enforce = 1 AND @curSession IS NOT NULL AND @curDevice IS NOT NULL
              AND (@DeviceId IS NULL OR @curDevice <> @DeviceId)
             THEN 1 ELSE 0 END;
 
@@ -38,7 +40,7 @@ internal sealed class OfficerSessionStore(ISqlConnectionFactory connections) : I
             VALUES (@OfficerId, @SessionId, @DeviceId, @ClientIp, GETDATE());
         ELSE IF @blocked = 0
             UPDATE dbo.GpsOfficerSession
-               SET SessionId = @SessionId, DeviceId = ISNULL(DeviceId, @DeviceId), ClientIp = @ClientIp,
+               SET SessionId = @SessionId, DeviceId = ISNULL(@DeviceId, DeviceId), ClientIp = @ClientIp,
                    StartedAt = GETDATE(), EndedAt = NULL,
                    ReplacedCount = ReplacedCount + CASE WHEN @curSession IS NULL THEN 0 ELSE 1 END
              WHERE OfficerId = @OfficerId;

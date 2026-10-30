@@ -97,6 +97,9 @@ public sealed class WardSyncResponse
     /// <summary>Survey:MaxAllottedPerOfficer - applications one RI may hold at once.</summary>
     [JsonPropertyName("maxAllottedPerOfficer")] public int MaxAllottedPerOfficer { get; set; }
 
+    /// <summary>Survey:UnassignOnSignOut - whether signing out gives back what the RI still holds.</summary>
+    [JsonPropertyName("unassignOnSignOut")] public bool UnassignOnSignOut { get; set; }
+
     /// <summary>How many the phone lacks before this batch is applied.</summary>
     [JsonPropertyName("missingCount")] public int MissingCount { get; init; }
 

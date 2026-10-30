@@ -117,10 +117,10 @@ internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJw
 
         if (!started)
         {
-            logger.LogInformation("Sign-in refused for officer {OfficerId}: bound to another phone",
+            logger.LogInformation("Sign-in refused for officer {OfficerId}: signed in on another phone",
                 officer.OfficerId);
             throw ApiException.Unprocessable(
-                "This account is registered to another device. ",
+                "This account is signed in on another phone. Sign out there first, then sign in here.",
                 ApiErrorCodes.SignedInElsewhere, recoverable: true);
         }
 
