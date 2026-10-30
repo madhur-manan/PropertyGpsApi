@@ -67,6 +67,27 @@ internal sealed class HistoryService(
                    TRY_CAST(rn.Ofcr_SiteRoadRowID AS int), rn.Ofcr_RowId)
         """;
 
+    // Whose survey a BtoA_MainApp_Officer row is. There is one such row per application, and
+    // USP_IU_BtoA_MainApp_Officer UPDATES it when it already exists - leaving CBy as whoever
+    // created it. On the test server a QC user (11235, role 118) bulk-created 106 of these
+    // rows on 2026-10-30, so an RI who then surveyed one of them was never its CBy and the
+    // survey vanished from their history (application 119, and five others). The RI's own
+    // status row keeps CBy = the RI whatever later updates the main row, as
+    // EarlierSurveyReader already relies on. Shared by every history query below.
+    //
+    // The officer's application numbers are gathered first, one pass over each table. A
+    // correlated "OR EXISTS" per row timed out on the test server: BtoA_StatusDetail_Officer
+    // (63k rows) has no index on Ofcr_ApplicationDisplayId, so it was scanned once for each of
+    // the 40k officer rows and Property History said "Could not load". This form takes 0.3s.
+    internal const string SurveyedByOfficerSql = """
+        mao.Ofcr_ApplicationDisplayId IN (
+            SELECT own.Ofcr_ApplicationDisplayId FROM dbo.BtoA_MainApp_Officer own WITH (NOLOCK)
+             WHERE own.CBy = @officerId
+            UNION
+            SELECT mine.Ofcr_ApplicationDisplayId FROM dbo.BtoA_StatusDetail_Officer mine WITH (NOLOCK)
+             WHERE mine.CBy = @officerId AND mine.CRole IN (116, 117))
+        """;
+
     // The ward is its ULB and ward number (text), as the ward sync matches them; zoneId and
     // wardId are no longer read and stay null in the reply.
     internal const string PageSql = $$"""
@@ -115,13 +136,13 @@ internal sealed class HistoryService(
             FROM dbo.BtoA_OwnerDetails o WITH (NOLOCK)
             WHERE o.Own_App_Id = ap.App_Id AND ISNULL(o.own_active, 1) = 1
         ) own
-        WHERE mao.CBy = @officerId
+        WHERE {{SurveyedByOfficerSql}}
         ORDER BY COALESCE(mao.UDte, mao.CDte) DESC
         OFFSET @start ROWS FETCH NEXT @range ROWS ONLY;
         """;
 
-    private const string CountSql = """
-        SELECT COUNT(*) FROM dbo.BtoA_MainApp_Officer WITH (NOLOCK) WHERE CBy = @officerId;
+    internal const string CountSql = $"""
+        SELECT COUNT(*) FROM dbo.BtoA_MainApp_Officer mao WITH (NOLOCK) WHERE {SurveyedByOfficerSql};
         """;
 
     public async Task<HistoryPage> PageForOfficerAsync(
@@ -201,14 +222,14 @@ internal sealed class HistoryService(
             ? $"SUM(CASE WHEN ap.App_Status = {codes[0]} THEN 1 ELSE 0 END)"
             : $"SUM(CASE WHEN ap.App_Status IN ({string.Join(", ", codes)}) THEN 1 ELSE 0 END)";
 
-    private static readonly string DailySql = $"""
+    internal static readonly string DailySql = $"""
         SELECT
                 Day = DAY(COALESCE(mao.UDte, mao.CDte)),
         {VerdictSums}
         FROM dbo.BtoA_MainApp_Officer mao WITH (NOLOCK)
         LEFT JOIN dbo.BtoAMainApp ap WITH (NOLOCK)
                ON ap.App_DisplayId = mao.Ofcr_ApplicationDisplayId
-        WHERE mao.CBy = @officerId
+        WHERE {SurveyedByOfficerSql}
           AND COALESCE(mao.UDte, mao.CDte) >= @from
           AND COALESCE(mao.UDte, mao.CDte) <  @to
         GROUP BY DAY(COALESCE(mao.UDte, mao.CDte))
@@ -219,11 +240,11 @@ internal sealed class HistoryService(
     /// Newest first. Built from the same submitted-on date the daily breakdown
     /// groups by, so the picker can never offer a month that then reads zero.
     /// </summary>
-    private const string MonthsSql = """
+    internal const string MonthsSql = $"""
         SELECT DISTINCT
             Ym = FORMAT(COALESCE(mao.UDte, mao.CDte), 'yyyy-MM')
         FROM dbo.BtoA_MainApp_Officer mao WITH (NOLOCK)
-        WHERE mao.CBy = @officerId
+        WHERE {SurveyedByOfficerSql}
           AND COALESCE(mao.UDte, mao.CDte) IS NOT NULL
         ORDER BY 1 DESC;
         """;
