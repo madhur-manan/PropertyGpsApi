@@ -65,6 +65,31 @@ internal sealed class OfficerService(
     }
 
     /// <summary>
+    /// A locked RI: switched off (Ofcr_Active = 0) with Ofcr_Locked_Date set, which is what
+    /// USP_S_Officer_ValidateOTP (db/41) does on the 4th wrong code in a row. A row switched
+    /// off any other way has no lock date and still gets the "not registered" message.
+    /// </summary>
+    public async Task<bool> IsLockedAfterWrongOtpsAsync(string mobile, CancellationToken ct)
+    {
+        await using var connection = await connections.OpenAsync(DbTarget.Master, ct);
+        var locked = await connection.ExecuteScalarAsync<int?>(new CommandDefinition(
+            IsLockedSql, new { mobile = mobile.Trim() }, cancellationToken: ct));
+        return locked == 1;
+    }
+
+    internal const string IsLockedSql = """
+        SELECT TOP (1) 1
+        FROM dbo.mst_Officer o WITH (NOLOCK)
+        WHERE o.Ofcr_MNo = @mobile
+          AND o.Ofcr_RoleId = 117
+          AND ISNULL(o.Ofcr_Active, 0) = 0
+          AND o.Ofcr_Locked_Date IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM dbo.mst_Officer a WITH (NOLOCK)
+                          WHERE a.Ofcr_MNo = @mobile AND a.Ofcr_RoleId = 117
+                            AND ISNULL(a.Ofcr_Active, 0) = 1);
+        """;
+
+    /// <summary>
     /// USP_S_Officer_ValidateOTP: one row per active officer row for the mobile, roles 116/117
     /// first, each carrying IsValidOtp. Zero rows is an unknown (or locked) officer.
     ///
@@ -89,7 +114,7 @@ internal sealed class OfficerService(
 
         var first = rows[0];
         if (!first.IsValidOtp)
-            return new OtpValidationResult(OtpValidationOutcome.InvalidCode, null);
+            return new OtpValidationResult(OtpValidationOutcome.InvalidCode, null, first.NoOfFailedAttempt);
 
         var officer = new Officer
         {

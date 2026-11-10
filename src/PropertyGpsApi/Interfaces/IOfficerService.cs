@@ -12,6 +12,13 @@ namespace PropertyGpsApi.Interfaces;
 public interface IOfficerService
 {
     Task<bool> OfficerExistsAsync(string mobile, int roleId, CancellationToken ct);
+
+    /// <summary>
+    /// True when the mobile's RI (117) row was switched off by the sign-in lock - wrong OTPs
+    /// (Ofcr_Active = 0 with Ofcr_Locked_Date set). Asked only after a sign-in check has
+    /// already failed, to tell a lock apart from an unknown number.
+    /// </summary>
+    Task<bool> IsLockedAfterWrongOtpsAsync(string mobile, CancellationToken ct);
     Task<long> StoreOtpAsync(string mobile, string otp, CancellationToken ct);
     Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct);
     Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct);
@@ -20,7 +27,7 @@ public interface IOfficerService
     Task<Officer?> LoadAsync(string mobile, CancellationToken ct);
 
     /// <summary>
-    /// The ULBs + wards a ward-scoped officer (116/117) holds - their own ward plus
+    /// The ULBs + wards a ward-scoped officer (the RI, 117) holds - their own ward plus
     /// mst_Ofcr_WardMapping. Empty for other roles. The same list the app's dropdowns show.
     /// </summary>
     Task<IReadOnlyList<Jurisdiction>> MappedWardsAsync(long officerId, CancellationToken ct);

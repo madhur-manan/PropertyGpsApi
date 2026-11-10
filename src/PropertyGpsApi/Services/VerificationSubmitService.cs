@@ -243,11 +243,12 @@ internal sealed class VerificationSubmitService(
         /// <summary>The officer of the newest active RI status row - the last survey received.</summary>
         public long? LastRiBy { get; init; }
         public DateTime? LastRiOn { get; init; }
-        /// <summary>The newest status row of any reviewer (QC, JC, ... - every role but 116/117).</summary>
+        /// <summary>The newest status row of any reviewer (QC, JC, ... - every role but the RI, 117).</summary>
         public DateTime? LastReviewOn { get; init; }
     }
 
-    // Roles: 116 Case Worker and 117 RI submit surveys; 118 is QC (masterDB_prod.dbo.Mst_Roles).
+    // Roles: only 117 (RI) submits surveys; 118 is QC (UDD_MASTERDB.dbo.Mst_Roles). 116 (Case Worker)
+    // belongs to other modules and counts as any other role here.
     internal const string SubmitStateSql = """
         SELECT AppStatus = m.App_Status,
                HolderId  = (SELECT TOP (1) a.Arch_Id FROM dbo.BtoA_Architect_AssignedApp a
@@ -256,10 +257,10 @@ internal sealed class VerificationSubmitService(
                LastRiBy  = ri.CBy,
                LastRiOn  = ri.CDte,
                LastReviewOn = (SELECT MAX(q.CDte) FROM dbo.BtoA_StatusDetail_Officer q
-                                WHERE q.Ofcr_App_Id = m.App_Id AND q.CRole NOT IN (116, 117))
+                                WHERE q.Ofcr_App_Id = m.App_Id AND q.CRole <> 117)
         FROM dbo.BtoAMainApp m
         OUTER APPLY (SELECT TOP (1) s.CBy, s.CDte FROM dbo.BtoA_StatusDetail_Officer s
-                      WHERE s.Ofcr_App_Id = m.App_Id AND s.Status_Active = 1 AND s.CRole IN (116, 117)
+                      WHERE s.Ofcr_App_Id = m.App_Id AND s.Status_Active = 1 AND s.CRole = 117
                       ORDER BY s.CDte DESC, s.Ofcr_RowId DESC) ri
         WHERE m.App_Id = @appId;
         """;
@@ -311,7 +312,7 @@ internal sealed class VerificationSubmitService(
     /// officer's roads, road documents and submit row would stay live beside the new ones and
     /// QC would see two surveys. They are made inactive here - kept, not deleted.
     ///
-    /// Only RI rows: roles 116/117, and 0 / 1 for what the legacy GPS app filed (its roads as
+    /// Only RI rows: role 117, and 0 / 1 for what the legacy GPS app filed (its roads as
     /// CRole 0, its road documents as role 1). QC writes its own road corrections through the
     /// same procedure (role 118); those are QC's record and are left alone.
     /// </summary>
@@ -329,7 +330,7 @@ internal sealed class VerificationSubmitService(
         UPDATE dbo.BtoA_SiteRoadDetails_Officer
            SET isActive = 0, UBy = @cby, UDte = GETDATE(), URole = @crole
          WHERE Ofcr_ApplicationDisplayId = @id AND CBy <> @cby AND isActive = 1
-           AND ISNULL(CRole, 0) IN (0, 116, 117);
+           AND ISNULL(CRole, 0) IN (0, 117);
         """;
 
     internal const string SupersedeOtherDocumentsSql = """
@@ -337,13 +338,13 @@ internal sealed class VerificationSubmitService(
            SET docTrn_Active = 0, docTrn_UBy = @cby, docTrn_UDte = GETDATE(), docTrn_URole = @crole
          WHERE docTrn_App_Id = @appId AND docTrn_Mdoc_id = 4 AND UniqueIdentifier = N'444'
            AND docTrn_CBy <> @cby AND docTrn_Active = 1
-           AND ISNULL(docTrn_CRole, 1) IN (1, 116, 117);
+           AND ISNULL(docTrn_CRole, 1) IN (1, 117);
         """;
 
     internal const string SupersedeOtherStatusSql = """
         UPDATE dbo.BtoA_StatusDetail_Officer
            SET Status_Active = 0, UBy = @cby, UDte = GETDATE(), URole = @crole
-         WHERE Ofcr_App_Id = @appId AND CBy <> @cby AND CRole IN (116, 117) AND Status_Active = 1;
+         WHERE Ofcr_App_Id = @appId AND CBy <> @cby AND CRole = 117 AND Status_Active = 1;
         """;
 
     // App_Status after a submit is 13, "Data Received from RI", and the status procedure

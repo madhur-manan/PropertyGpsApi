@@ -108,8 +108,8 @@ public sealed class OtpOptions
 
     /// <summary>
     /// The role the mobile app signs in as. USP_S_ValidateOfficer matches on role as well as
-    /// mobile number, so this has to be right: 117 is the RI (Mst_Roles, UDD_MASTERDB). 116,
-    /// the case worker, is the other ward-scoped role and is treated the same everywhere.
+    /// mobile number, so this has to be right: 117 is the RI (Mst_Roles, UDD_MASTERDB), the only
+    /// role that surveys in Property GPS. 116, the case worker, belongs to other modules.
     /// </summary>
     [Range(1, 9999)] public int DefaultRoleId { get; init; } = 117;
 

@@ -72,6 +72,7 @@ public class WardLiveTests
                 ? throw new TimeoutException("database")
                 : Task.FromResult<IReadOnlyList<Jurisdiction>>(Wards);
         public Task<bool> OfficerExistsAsync(string mobile, int roleId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<bool> IsLockedAfterWrongOtpsAsync(string mobile, CancellationToken ct) => throw new NotSupportedException();
         public Task<long> StoreOtpAsync(string mobile, string otp, CancellationToken ct) => throw new NotSupportedException();
         public Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct) => throw new NotSupportedException();
         public Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct) => throw new NotSupportedException();

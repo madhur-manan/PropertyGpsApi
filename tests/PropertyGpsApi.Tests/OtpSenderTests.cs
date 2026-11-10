@@ -116,11 +116,111 @@ public class OtpSenderTests
         Options.Create(new AuthOptions()),
         NullLogger<OtpService>.Instance);
 
+    // ---- Locked after wrong OTPs: its own message; tries left on a wrong code ----
+
+    [Fact]
+    public async Task Send_to_a_locked_RI_says_the_account_is_locked()
+    {
+        var service = Service(Sender(), new FakeOfficers { Exists = false, Locked = true });
+
+        var ex = await Assert.ThrowsAsync<PropertyGpsApi.Common.ApiException>(() => service.SendAsync(Request, default));
+
+        Assert.Equal("OFFICER_LOCKED", ex.Code);
+        Assert.Equal(OtpService.LockedMessage, ex.Message);
+        Assert.Contains("wrong OTP was entered 4 times", ex.Message);
+    }
+
+    [Fact]
+    public async Task Send_to_an_unknown_number_keeps_the_old_message()
+    {
+        var service = Service(Sender(), new FakeOfficers { Exists = false, Locked = false });
+
+        var ex = await Assert.ThrowsAsync<PropertyGpsApi.Common.ApiException>(() => service.SendAsync(Request, default));
+
+        Assert.Equal("OFFICER_NOT_REGISTERED", ex.Code);
+        Assert.Contains("not registered as an officer", ex.Message);
+    }
+
+    [Fact]
+    public async Task Send_to_an_active_RI_never_asks_about_a_lock()
+    {
+        var officers = new FakeOfficers();
+        await Service(Sender(), officers).SendAsync(Request, default);
+        Assert.Equal(0, officers.LockChecks);
+    }
+
+    [Fact]
+    public async Task The_wrong_code_that_locks_says_the_account_is_locked()
+    {
+        var officers = new FakeOfficers
+        {
+            Locked = true,
+            Validation = new OtpValidationResult(OtpValidationOutcome.UnknownOrLockedOfficer, null),
+        };
+
+        var ex = await Assert.ThrowsAsync<PropertyGpsApi.Common.ApiException>(() => Verify(officers, "123456"));
+
+        Assert.Equal("OFFICER_LOCKED", ex.Code);
+        Assert.Equal(OtpService.LockedMessage, ex.Message);
+    }
+
+    [Fact]
+    public async Task Verify_for_an_unknown_number_keeps_the_old_message()
+    {
+        var officers = new FakeOfficers
+        {
+            Validation = new OtpValidationResult(OtpValidationOutcome.UnknownOrLockedOfficer, null),
+        };
+
+        var ex = await Assert.ThrowsAsync<PropertyGpsApi.Common.ApiException>(() => Verify(officers, "123456"));
+
+        Assert.Equal("OFFICER_NOT_REGISTERED", ex.Code);
+    }
+
+    [Theory]
+    [InlineData(1, "3 attempts left")]
+    [InlineData(2, "2 attempts left")]
+    [InlineData(3, "1 attempt left")]
+    public async Task A_wrong_code_says_how_many_tries_are_left(int used, string expected)
+    {
+        var officers = new FakeOfficers
+        {
+            Validation = new OtpValidationResult(OtpValidationOutcome.InvalidCode, null, used),
+        };
+
+        var ex = await Assert.ThrowsAsync<PropertyGpsApi.Common.ApiException>(() => Verify(officers, "123456"));
+
+        Assert.Equal("OTP_INVALID", ex.Code);
+        Assert.Contains(expected + " before your account is locked", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    [InlineData(4)]
+    public void Without_a_usable_count_the_wrong_code_message_is_the_plain_one(int? used) =>
+        Assert.Equal("That code is not correct or has expired.", OtpService.WrongCodeMessage(used));
+
+    private static ServerLogOtpSender Sender() => new(NullLogger<ServerLogOtpSender>.Instance);
+
+    private static Task Verify(FakeOfficers officers, string otp) =>
+        Service(Sender(), officers).VerifyAsync(new VerifyOtpRequest { Mobile = "9000000001", Otp = otp }, null, default);
+
     private sealed class FakeOfficers : IOfficerService
     {
         public string? StoredOtp { get; private set; }
+        public bool Exists { get; init; } = true;
+        public bool Locked { get; init; }
+        public OtpValidationResult? Validation { get; init; }
+        public int LockChecks { get; private set; }
 
-        public Task<bool> OfficerExistsAsync(string mobile, int roleId, CancellationToken ct) => Task.FromResult(true);
+        public Task<bool> OfficerExistsAsync(string mobile, int roleId, CancellationToken ct) => Task.FromResult(Exists);
+
+        public Task<bool> IsLockedAfterWrongOtpsAsync(string mobile, CancellationToken ct)
+        {
+            LockChecks++;
+            return Task.FromResult(Locked);
+        }
 
         public Task<long> StoreOtpAsync(string mobile, string otp, CancellationToken ct)
         {
@@ -128,7 +228,8 @@ public class OtpSenderTests
             return Task.FromResult(1L);
         }
 
-        public Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct) => throw new NotSupportedException();
+        public Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct) =>
+            Validation is null ? throw new NotSupportedException() : Task.FromResult(Validation);
         public Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct) => throw new NotSupportedException();
         public Task<Officer?> LoadAsync(string mobile, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<Jurisdiction>> MappedWardsAsync(long officerId, CancellationToken ct) => throw new NotSupportedException();

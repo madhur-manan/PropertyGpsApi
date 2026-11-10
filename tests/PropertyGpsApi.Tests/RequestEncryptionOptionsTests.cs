@@ -167,8 +167,8 @@ public class RequestEncryptionOptionsTests
         Assert.Equal([TestKeys.Kid(TestKeys.Primary), TestKeys.Kid(TestKeys.Secondary)],
             new RequestKeyRing(Options.Create(two)).Kids);
 
-        // What appsettings.json ships: Mode Optional and no keys.
-        var none = FromJson("""{ "RequestEncryption": { "Mode": "Optional", "Keys": [], "PlainAllowedPaths": [] } }""");
+        // What appsettings.json ships: Mode Required (since 2026-11-09) and no keys.
+        var none = FromJson("""{ "RequestEncryption": { "Mode": "Required", "Keys": [], "PlainAllowedPaths": [] } }""");
         Assert.NotNull(none.Keys);
         Assert.Empty(none.Keys);
         Assert.Contains("no RequestEncryption:Keys entry has a PrivateKey", Failures(Validate(none)));

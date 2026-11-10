@@ -29,7 +29,7 @@ public interface ICitizenDocumentService
 /// <summary>
 /// The citizen's documents of an application (user, 2026-10-30): the active BtoA_DocumentTran
 /// rows, named from UDD_MASTERDB.dbo.mst_docType. The RI's own captures are left out - types
-/// 12 and 13, and every row created by a ward officer (roles 116 / 117). The files are read
+/// 12 and 13, and every row created by an RI (role 117). The files are read
 /// from Scality by their reference key; an older row holding our own link is read from the disk.
 /// </summary>
 internal sealed class CitizenDocumentService(
@@ -42,7 +42,7 @@ internal sealed class CitizenDocumentService(
           FROM dbo.BtoA_DocumentTran d WITH (NOLOCK)
          WHERE d.docTrn_App_Id = @appId AND d.docTrn_Active = 1
            AND ISNULL(d.docTrn_Mdoc_id, 0) NOT IN (12, 13)
-           AND ISNULL(d.docTrn_CRole, 0) NOT IN (116, 117)
+           AND ISNULL(d.docTrn_CRole, 0) <> 117
            AND ISNULL(d.docTrn_url, N'') <> N''
          ORDER BY d.docTrn_Mdoc_id, d.docTrn_Id;
         """;
@@ -52,7 +52,7 @@ internal sealed class CitizenDocumentService(
           FROM dbo.BtoA_DocumentTran d WITH (NOLOCK)
          WHERE d.docTrn_Id = @documentId AND d.docTrn_Active = 1
            AND ISNULL(d.docTrn_Mdoc_id, 0) NOT IN (12, 13)
-           AND ISNULL(d.docTrn_CRole, 0) NOT IN (116, 117);
+           AND ISNULL(d.docTrn_CRole, 0) <> 117;
         """;
 
     internal const string EpidSql = "SELECT TOP (1) App_MotherEPID FROM dbo.BtoAMainApp WITH (NOLOCK) WHERE App_Id = @appId";

@@ -16,7 +16,8 @@
       5. starts the pool and calls /health/live and /health/ready
 
     Re-running it is safe: existing pool and application are updated, not duplicated.
-    The media folder is never emptied, and logs\ is never overwritten.
+    The media folder is never emptied, logs\ is never overwritten, and an existing
+    appsettings.json is never replaced.
 #>
 [CmdletBinding()]
 param(
@@ -116,9 +117,14 @@ foreach ($d in $AppRoot, (Join-Path $AppRoot 'logs'), $MediaRoot) {
 # /E copies everything; /XD logs leaves the log folder alone; no /MIR, so nothing is deleted.
 # /R:5 /W:5: a file still locked fails here in half a minute, not after robocopy's own
 # default of a million retries.
-robocopy $Source $AppRoot /E /XD logs /R:5 /W:5 /NFL /NDL /NJH /NJS /NP | Out-Null
+# The server's own appsettings.json is never replaced (user, 2026-11-01: the latest settings must
+# never be reverted). The package's copy is used only on a first install, when there is none yet.
+$keepSettings = Test-Path (Join-Path $AppRoot 'appsettings.json')
+$exclude = if ($keepSettings) { @('/XF', 'appsettings.json') } else { @() }
+robocopy $Source $AppRoot /E /XD logs @exclude /R:5 /W:5 /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { Fail "robocopy failed with code $LASTEXITCODE." }
 Ok "files copied to $AppRoot"
+if ($keepSettings) { Ok "the server's appsettings.json was kept as it is (not replaced by the package's)" }
 
 Step '3. App pool and application'
 if (-not (Test-Path $poolPath)) { New-WebAppPool -Name $PoolName | Out-Null; Ok "created pool $PoolName" }

@@ -158,6 +158,21 @@ public class WardSyncTests
             Assert.Contains("\"holders\":[{\"appId\":8,\"assignedToUserId\":0}]", json);
         }
 
+        /// <summary>
+        /// Reported 2026-11-04: app 22 came down as returned before QC's row carried its role, so
+        /// the card's "QC Remarks:" stayed empty while the survey screen showed the remark.
+        /// </summary>
+        [Fact]
+        public void The_qc_remarks_of_returned_records_travel_with_their_wire_names()
+        {
+            var json = JsonSerializer.Serialize(new WardSyncResponse
+            {
+                QcRemarks = [new WardSyncQcRemarkDto { AppId = 22, QcRemarks = "Recheck the road" }]
+            });
+
+            Assert.Contains("\"qcRemarks\":[{\"appId\":22,\"qcRemarks\":\"Recheck the road\"}]", json);
+        }
+
         /// <summary>Asked about every record a phone holds, so the ids cannot be one parameter each.</summary>
         [Fact]
         public void The_holder_lookup_takes_its_ids_as_one_string()
@@ -543,6 +558,7 @@ public class WardSyncTests
             Task.FromResult(wards);
 
         public Task<bool> OfficerExistsAsync(string mobile, int roleId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<bool> IsLockedAfterWrongOtpsAsync(string mobile, CancellationToken ct) => throw new NotSupportedException();
         public Task<long> StoreOtpAsync(string mobile, string otp, CancellationToken ct) => throw new NotSupportedException();
         public Task<OtpValidationResult> ValidateOtpAsync(string mobile, string otp, CancellationToken ct) => throw new NotSupportedException();
         public Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct) => throw new NotSupportedException();

@@ -222,9 +222,9 @@ public sealed class ScalityTests
     public void The_list_leaves_out_the_ris_own_captures()
     {
         Assert.Contains("NOT IN (12, 13)", CitizenDocumentService.ListSql);
-        Assert.Contains("NOT IN (116, 117)", CitizenDocumentService.ListSql);
+        Assert.Contains("ISNULL(d.docTrn_CRole, 0) <> 117", CitizenDocumentService.ListSql);
         Assert.Contains("docTrn_Active = 1", CitizenDocumentService.ListSql);
-        Assert.Contains("NOT IN (116, 117)", CitizenDocumentService.OneSql);
+        Assert.Contains("ISNULL(d.docTrn_CRole, 0) <> 117", CitizenDocumentService.OneSql);
     }
 
     [Theory]

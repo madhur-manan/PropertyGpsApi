@@ -84,11 +84,11 @@ public class QcReturnTests
 
         [Fact]
         public void Reads_the_last_survey_from_RI_rows_only() =>
-            Assert.Contains("s.Status_Active = 1 AND s.CRole IN (116, 117)", SubmitStateSql);
+            Assert.Contains("s.Status_Active = 1 AND s.CRole = 117", SubmitStateSql);
 
         [Fact]
         public void Reads_every_reviewer_not_only_QC() =>
-            Assert.Contains("q.CRole NOT IN (116, 117)", SubmitStateSql);
+            Assert.Contains("q.CRole <> 117", SubmitStateSql);
     }
 
     public class ReplacingTheFirstSurvey
@@ -115,9 +115,25 @@ public class QcReturnTests
         [Fact]
         public void QCs_own_rows_are_left_alone()
         {
-            Assert.Contains("CRole IN (116, 117)", SupersedeOtherStatusSql);
-            Assert.Contains("ISNULL(CRole, 0) IN (0, 116, 117)", SupersedeOtherRoadsSql);
-            Assert.Contains("ISNULL(docTrn_CRole, 1) IN (1, 116, 117)", SupersedeOtherDocumentsSql);
+            Assert.Contains("CRole = 117", SupersedeOtherStatusSql);
+            Assert.Contains("ISNULL(CRole, 0) IN (0, 117)", SupersedeOtherRoadsSql);
+            Assert.Contains("ISNULL(docTrn_CRole, 1) IN (1, 117)", SupersedeOtherDocumentsSql);
+        }
+
+        /// <summary>
+        /// The RI is role 117 only (user, 2026-10-31). A Case Worker (116) works the same
+        /// applications in other modules; their rows are never an RI survey to read or retire.
+        /// </summary>
+        [Fact]
+        public void A_case_workers_rows_are_not_an_ri_survey()
+        {
+            foreach (var sql in new[]
+                     {
+                         SubmitStateSql, SupersedeOtherStatusSql, SupersedeOtherRoadsSql, SupersedeOtherDocumentsSql,
+                         EarlierSurveyReader.Sql, HistoryService.SurveyedByOfficerSql,
+                         CitizenDocumentService.ListSql, CitizenDocumentService.OneSql
+                     })
+                Assert.DoesNotContain("116", sql);
         }
     }
 

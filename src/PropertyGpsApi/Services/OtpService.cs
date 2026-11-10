@@ -23,10 +23,15 @@ internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJw
         // happily store a code for any number that arrives, which wastes an SMS on a typo and
         // lets an outsider probe the endpoint at no cost to themselves.
         if (!await officers.OfficerExistsAsync(request.Mobile, roleId, ct))
+        {
+            // Asked only now, after the check failed: a normal sign-in costs no extra query.
+            if (await officers.IsLockedAfterWrongOtpsAsync(request.Mobile, ct))
+                throw Locked();
             throw ApiException.Unprocessable(
                 "This mobile number is not registered as an officer, or the account has been "
                 + "locked. Please contact your administrator.",
                 ApiErrorCodes.OfficerNotRegistered);
+        }
 
         var otp = GenerateOtp(otpOptions.Length);
 
@@ -69,17 +74,18 @@ internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJw
         switch (result.Outcome)
         {
             case OtpValidationOutcome.UnknownOrLockedOfficer:
-                // Deliberately one message for both cases. The procedure cannot distinguish
-                // an unregistered number from a locked account, and telling them apart would
-                // let anyone enumerate which mobile numbers belong to officers.
+                // Zero rows also on the call whose wrong code locked the account. A lock gets
+                // its own message (user's decision, 2026-11-09): it shows that a LOCKED number
+                // is an officer's; every other number still gets the one shared message.
+                if (await officers.IsLockedAfterWrongOtpsAsync(request.Mobile, ct))
+                    throw Locked();
                 throw ApiException.Unprocessable(
                     "This mobile number is not registered, or the account has been locked. "
                     + "Please contact your administrator.",
                     ApiErrorCodes.OfficerNotRegistered);
 
             case OtpValidationOutcome.InvalidCode:
-                throw ApiException.Unprocessable(
-                    "That code is not correct or has expired.", ApiErrorCodes.OtpInvalid);
+                throw ApiException.Unprocessable(WrongCodeMessage(result.AttemptsUsed), ApiErrorCodes.OtpInvalid);
         }
 
         var officer = result.Officer!;
@@ -141,6 +147,31 @@ internal sealed class OtpService( IOfficerService officers,IOtpSender sender,IJw
         // The same shape auth/me answers with: the officer's ULBs and wards, the first one
         // (the token's) also at the top.
         return OfficerService.ToResponse(officer, token, expiresAt);
+    }
+
+    /// <summary>
+    /// Wrong codes in a row that lock the account. MUST match @MaxFailures in
+    /// USP_S_Officer_ValidateOTP (db/41_master_UddSignIn.sql).
+    /// </summary>
+    internal const int LockAfterWrongOtps = 4;
+
+    internal static readonly string LockedMessage =
+        $"Your account is locked because a wrong OTP was entered {LockAfterWrongOtps} times. "
+        + "Please contact your administrator to unlock it.";
+
+    private static ApiException Locked() =>
+        ApiException.Unprocessable(LockedMessage, ApiErrorCodes.OfficerLocked);
+
+    /// <summary>
+    /// "N attempts left" when the procedure said how many wrong codes in a row there have
+    /// been; the plain message otherwise.
+    /// </summary>
+    internal static string WrongCodeMessage(int? attemptsUsed)
+    {
+        var left = LockAfterWrongOtps - (attemptsUsed ?? 0);
+        if (attemptsUsed is not > 0 || left <= 0)
+            return "That code is not correct or has expired.";
+        return $"That code is not correct or has expired. {left} {(left == 1 ? "attempt" : "attempts")} left before your account is locked.";
     }
 
     /// <summary>

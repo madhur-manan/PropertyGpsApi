@@ -20,7 +20,8 @@ public sealed class HistoryOwnershipTests
         Assert.Contains("WHERE own.CBy = @officerId", rule);
         Assert.Contains("UNION", rule);
         Assert.Contains("FROM dbo.BtoA_StatusDetail_Officer mine", rule);
-        Assert.Contains("mine.CBy = @officerId AND mine.CRole IN (116, 117)", rule);
+        Assert.Contains("mine.CBy = @officerId AND mine.CRole = 117", rule);
+        Assert.DoesNotContain("116", rule);
     }
 
     /// <summary>

@@ -26,7 +26,7 @@ public sealed class SubmitVerificationRequest
 
     /// <summary>
     /// The application's ULB and ward number, as the ward sync delivered them. A ward officer
-    /// (116/117) may only submit for one of the wards mapped to them; checked on these two.
+    /// (the RI, 117) may only submit for one of the wards mapped to them; checked on these two.
     /// </summary>
     [JsonPropertyName("ulbCode")] public int UlbCode { get; init; }
     [JsonPropertyName("wardNumber")] public string? WardNumber { get; init; }

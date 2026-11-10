@@ -74,6 +74,14 @@ internal sealed class WardSyncService(
             holders = Holders(open, await assignments.ActiveForAsync(connection, open, ct));
         }
 
+        // Also once per sync: QC's remark now for every returned survey the phone already shows.
+        // A returned application is sent only once, so a remark QC filled in (or changed) after
+        // that never reached the card - only the survey screen, which asks the server itself.
+        IReadOnlyDictionary<int, string> returnedRemarks = new Dictionary<int, string>();
+        if (request.IncludeClosed)
+            returnedRemarks = await QcRemarksAsync(
+                connection, StillOpen(request.ReturnedAppIds, closed.Select(c => c.AppId)), ct);
+
         logger.LogInformation(
             "Ward sync for officer {OfficerId} ULB {Ulb} ward {Ward}: server {ServerCount}, phone {LocalCount} " +
             "(sent {Known} ids), missing {MissingCount}, sending {Apps} applications ({Rows} rows), {Closed} closed, " +
@@ -89,7 +97,8 @@ internal sealed class WardSyncService(
             MissingCount = summary.MissingCount,
             Items = grouped.Select(g => PropertyMapper.Map(g, assignmentsByApp, ownersByApp, officerId, qcByApp)).ToList(),
             Closed = closed.Select(c => new WardSyncClosedDto { AppId = c.AppId, AppStatus = c.AppStatus }).ToList(),
-            Holders = holders
+            Holders = holders,
+            QcRemarks = returnedRemarks.Select(r => new WardSyncQcRemarkDto { AppId = r.Key, QcRemarks = r.Value }).ToList()
         };
     }
 

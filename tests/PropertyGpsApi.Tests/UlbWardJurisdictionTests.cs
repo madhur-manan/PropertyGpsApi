@@ -12,7 +12,7 @@ namespace PropertyGpsApi.Tests;
 /// <summary>
 /// Property GPS works by ULB + ward number only (UDD_MASTERDB). An officer's wards are their
 /// own (mst_Officer.Ofcr_ULBId + Ofcr_WardId) plus their active mst_Ofcr_WardMapping rows
-/// (Map_CorpId as the ULB, Map_WardId as the number); a ward officer (116/117) may act in any
+/// (Map_CorpId as the ULB, Map_WardId as the number); a ward officer (the RI, 117) may act in any
 /// of them and in no other. Zones, corporations, divisions and the GBA/BBMP columns are read
 /// nowhere; the JSON fields that carried them stay, null.
 /// </summary>

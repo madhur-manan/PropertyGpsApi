@@ -36,7 +36,7 @@ internal static class EarlierSurveyReader
 
         SELECT TOP (1) @by = s.CBy, @role = s.CRole, @statusRowId = s.Ofcr_RowId
         FROM dbo.BtoA_StatusDetail_Officer s WITH (NOLOCK)
-        WHERE s.Ofcr_App_Id = @appId AND s.Status_Active = 1 AND s.CRole IN (116, 117)
+        WHERE s.Ofcr_App_Id = @appId AND s.Status_Active = 1 AND s.CRole = 117
         ORDER BY s.CDte DESC, s.Ofcr_RowId DESC;
 
         SELECT @prevSubmitOn = MAX(p.CDte) FROM dbo.BtoA_StatusDetail_Officer p WITH (NOLOCK)

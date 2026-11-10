@@ -361,7 +361,7 @@ public class EarlierSurveyReaderTests
 
         [Fact]
         public void Takes_the_last_RI_survey_not_QCs_row() =>
-            Assert.Contains("s.Status_Active = 1 AND s.CRole IN (116, 117)", Sql);
+            Assert.Contains("s.Status_Active = 1 AND s.CRole = 117", Sql);
 
         [Fact]
         public void Reads_only_that_officers_roads() =>

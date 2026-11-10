@@ -340,6 +340,7 @@ public class OfficerSessionTests
             Task.FromResult(new OtpValidationResult(OtpValidationOutcome.Valid, Officer));
         public Task RecordLoginAsync(Officer officer, string? clientIp, CancellationToken ct) => Task.CompletedTask;
         public Task<bool> OfficerExistsAsync(string mobile, int roleId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<bool> IsLockedAfterWrongOtpsAsync(string mobile, CancellationToken ct) => throw new NotSupportedException();
         public Task<long> StoreOtpAsync(string mobile, string otp, CancellationToken ct) => throw new NotSupportedException();
         public Task<Officer?> LoadAsync(string mobile, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<Jurisdiction>> MappedWardsAsync(long officerId, CancellationToken ct) => throw new NotSupportedException();

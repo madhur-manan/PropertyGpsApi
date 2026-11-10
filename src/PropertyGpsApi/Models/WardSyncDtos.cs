@@ -117,6 +117,13 @@ public sealed class WardSyncResponse
     /// this one: a released record stayed "allotted to another officer" here for good.
     /// </summary>
     [JsonPropertyName("holders")] public IReadOnlyList<WardSyncHolderDto> Holders { get; init; } = [];
+
+    /// <summary>
+    /// QC's remark now for each returned (400) application the phone already shows - sent with
+    /// <see cref="Closed"/>, once per sync, and only where QC wrote one. A returned application
+    /// is downloaded once, so without this a remark added after that never reached the card.
+    /// </summary>
+    [JsonPropertyName("qcRemarks")] public IReadOnlyList<WardSyncQcRemarkDto> QcRemarks { get; init; } = [];
 }
 
 /// <summary>
@@ -223,6 +230,13 @@ public sealed class WardSyncHolderDto
 
     /// <summary>The officer holding it now; 0 when it is free.</summary>
     [JsonPropertyName("assignedToUserId")] public int AssignedToUserId { get; init; }
+}
+
+public sealed class WardSyncQcRemarkDto
+{
+    [JsonPropertyName("appId")] public int AppId { get; init; }
+
+    [JsonPropertyName("qcRemarks")] public string QcRemarks { get; init; } = "";
 }
 
 public sealed class WardSyncClosedDto

@@ -27,7 +27,7 @@ internal sealed class HistoryService(
     TimeProvider clock) : IHistoryService
 {
     /// <summary>
-    /// masterDB_prod.dbo.Mst_Roles: 116 Case Worker, 117 RI, 118 QC, 125 Joint
+    /// UDD_MASTERDB.dbo.Mst_Roles: 116 Case Worker, 117 RI, 118 QC, 125 Joint
     /// Commissioner. BtoA_StatusDetail_Officer is a shared transition log that every
     /// role writes to, so the newest row on an application is usually the officer's
     /// own submit remark, not QC's.
@@ -85,7 +85,7 @@ internal sealed class HistoryService(
              WHERE own.CBy = @officerId
             UNION
             SELECT mine.Ofcr_ApplicationDisplayId FROM dbo.BtoA_StatusDetail_Officer mine WITH (NOLOCK)
-             WHERE mine.CBy = @officerId AND mine.CRole IN (116, 117))
+             WHERE mine.CBy = @officerId AND mine.CRole = 117)
         """;
 
     // The ward is its ULB and ward number (text), as the ward sync matches them; zoneId and
